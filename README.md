@@ -21,6 +21,14 @@ docker attach agy-ubuntu-container
 agy   # 登录并开始
 ```
 
+## 共享 git / SSH
+
+宿主机 `~/.gitconfig`(身份)与 `~/.ssh`(SSH 密钥)会自动挂载进容器,容器内可直接 `git commit` / `git push`:
+
+- 身份沿用宿主机配置(user.name / user.email)
+- GitHub HTTPS 远程自动重写为 SSH(走 `ssh.github.com:443`,无需 PAT)
+- 密钥在容器内已修正权限(chmod 600)
+
 ## 构建说明
 
 镜像采用**离线构建**:`downloads/` 目录存放预下载的产物(mihomo 二进制、agy 二进制、apt 的 .deb 包),构建过程不联网。`downloads/` 未纳入 git,克隆后一键准备:

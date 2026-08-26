@@ -115,7 +115,41 @@ fi
 printf 'nameserver 127.0.0.1\n' > /etc/resolv.conf
 
 #------------------------------------------------------------------------------
-# 5. Welcome banner + interactive shell
+# 5. Share host git identity + SSH keys (so git commit/push works in-container).
+#    Windows bind mounts give SSH keys wrong permissions — copy + chmod 600.
+#    GitHub HTTPS remotes are rewritten to SSH (uses the shared key, no PAT),
+#    routed over ssh.github.com:443 (SSH-over-HTTPS, reliable behind proxies).
+#------------------------------------------------------------------------------
+if [ -f /root/.gitconfig-host ]; then
+    cp /root/.gitconfig-host /root/.gitconfig
+    chmod 644 /root/.gitconfig
+    cat >> /root/.gitconfig <<'EOF'
+
+[url "git@github.com:"]
+    insteadOf = https://github.com/
+EOF
+    echo "[entrypoint] git identity shared (GitHub HTTPS → SSH rewrite enabled)."
+fi
+
+if [ -d /root/.ssh-host ] && [ -n "$(ls -A /root/.ssh-host 2>/dev/null)" ]; then
+    mkdir -p /root/.ssh
+    cp -r /root/.ssh-host/. /root/.ssh/ 2>/dev/null
+    chmod 700 /root/.ssh
+    chmod 600 /root/.ssh/id_* 2>/dev/null
+    chmod 644 /root/.ssh/*.pub /root/.ssh/known_hosts* 2>/dev/null
+    cat > /root/.ssh/config <<'EOF'
+Host github.com
+    HostName ssh.github.com
+    Port 443
+    User git
+    StrictHostKeyChecking accept-new
+EOF
+    chmod 600 /root/.ssh/config
+    echo "[entrypoint] SSH keys shared from host (~/.ssh)."
+fi
+
+#------------------------------------------------------------------------------
+# 6. Welcome banner + interactive shell
 #------------------------------------------------------------------------------
 cat <<'BANNER'
 
