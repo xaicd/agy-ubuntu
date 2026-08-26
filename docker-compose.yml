@@ -29,6 +29,8 @@ services:
 
     volumes:
       - ./workspace:/root/workspace
+      # 持久化 agy 登录状态(重建容器不丢登录)
+      - ./agy-home:/root/.gemini
       # 共享宿主机 git 身份 + SSH 密钥(容器内可 commit/push)
       - ${USERPROFILE}/.gitconfig:/root/.gitconfig-host:ro
       - ${USERPROFILE}/.ssh:/root/.ssh-host:ro
