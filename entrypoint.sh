@@ -128,6 +128,9 @@ if [ -f /root/.gitconfig-host ]; then
 [url "git@github.com:"]
     insteadOf = https://github.com/
 EOF
+    # 绑定挂载的 Windows 文件会带来 CRLF / 权限差异,关闭这两项避免 git 误报
+    git config --global core.autocrlf false
+    git config --global core.filemode false
     echo "[entrypoint] git identity shared (GitHub HTTPS → SSH rewrite enabled)."
 fi
 
