@@ -30,8 +30,8 @@ services:
     volumes:
       - ./workspace:/root/workspace
       # 共享宿主机 git 身份 + SSH 密钥(容器内可 commit/push)
-      - ~/.gitconfig:/root/.gitconfig-host:ro
-      - ~/.ssh:/root/.ssh-host:ro
+      - ${USERPROFILE}/.gitconfig:/root/.gitconfig-host:ro
+      - ${USERPROFILE}/.ssh:/root/.ssh-host:ro
 
     # --- Interactive session support (docker attach / exec) ---
     stdin_open: true
