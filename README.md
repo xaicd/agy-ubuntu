@@ -13,7 +13,7 @@ Ubuntu 24.04 沙盒开发容器:内嵌 **Mihomo (Clash Meta) TUN** 全流量隔�
 cp .env.example .env
 # 编辑 .env,填入你的 mihomo 订阅链接(CLASH_URL)
 
-# 2. 启动
+# 2. 启动(自动拉取 Docker Hub 镜像 chw717/ai-agy:latest,无需本地构建)
 docker compose up -d
 
 # 3. 进入
@@ -31,7 +31,9 @@ agy   # 登录并开始
 
 ## 构建说明
 
-镜像采用**离线构建**:`downloads/` 目录存放预下载的产物(mihomo 二进制、agy 二进制、apt 的 .deb 包),构建过程不联网。`downloads/` 未纳入 git,克隆后一键准备:
+镜像已发布到 **Docker Hub**(`chw717/ai-agy:latest`),`docker compose up -d` 会自动拉取,**无需本地构建**。
+
+只有需要本地重新构建时(`docker compose up -d --build`)才需要 `downloads/` 目录——镜像采用**离线构建**:`downloads/` 存放预下载产物(mihomo 二进制、agy 二进制、apt 的 .deb 包),构建过程不联网。`downloads/` 未纳入 git,克隆后一键准备:
 
 ```bash
 bash prepare-downloads.sh        # 默认走 127.0.0.1:7890 代理

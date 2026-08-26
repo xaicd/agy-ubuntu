@@ -10,7 +10,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: agy-ubuntu:mihomo
+    image: chw717/ai-agy:latest
     container_name: agy-ubuntu-container
     restart: always
 
