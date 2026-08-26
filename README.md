@@ -23,11 +23,18 @@ agy   # 登录并开始
 
 ## 构建说明
 
-镜像采用**离线构建**:`downloads/` 目录存放预下载的产物(mihomo 二进制、agy 二进制、apt 的 .deb 包),构建过程不联网。`downloads/` 未纳入 git,克隆后需先准备该目录:
+镜像采用**离线构建**:`downloads/` 目录存放预下载的产物(mihomo 二进制、agy 二进制、apt 的 .deb 包),构建过程不联网。`downloads/` 未纳入 git,克隆后一键准备:
+
+```bash
+bash prepare-downloads.sh        # 默认走 127.0.0.1:7890 代理
+PROXY= bash prepare-downloads.sh # 直连(不代理)
+```
+
+脚本会下载:
 
 - `downloads/mihomo` — mihomo v1.19.30+ Linux amd64(需支持订阅中的 `anytls` 协议)
-- `downloads/agy.tar.gz` — agy CLI(内含 `antigravity` 二进制)
-- `downloads/debs/*.deb` — 基础工具的完整依赖闭包(77 个)
+- `downloads/agy.tar.gz` — agy CLI(内含 `antigravity` 二进制,自动校验 sha512)
+- `downloads/debs/*.deb` — 基础工具的完整依赖闭包(77 个,通过 WSL Ubuntu 解析)
 
 ### 订阅(base64)
 
