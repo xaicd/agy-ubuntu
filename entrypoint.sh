@@ -15,6 +15,12 @@ MIHOMO_DIR="/root/.config/mihomo"
 CONFIG="${MIHOMO_DIR}/config.yaml"
 LOG_FILE="/root/mihomo.log"
 
+# 自动检测 eth0 的实际 MTU,让 TUN 与之匹配。
+# Windows WSL2 的 eth0 是 1400(daemon 已降),原生 Linux 是 1500。
+# 两者不一致会导致大响应被截断(EOF),所以不能硬编码。
+ETH0_MTU="$(ip link show eth0 2>/dev/null | sed -n 's/.*mtu \([0-9]*\).*/\1/p')"
+TUN_MTU="${TUN_MTU:-${ETH0_MTU:-1500}}"
+
 #------------------------------------------------------------------------------
 # 1. Build the base config.
 #    If CLASH_URL is set, use mihomo's proxy-providers to fetch the subscription.
@@ -73,14 +79,14 @@ awk '
     !skip { print }
 ' "${CONFIG}" > "${CONFIG}.clean" && mv -f "${CONFIG}.clean" "${CONFIG}"
 
-cat >> "${CONFIG}" <<'EOF'
+cat >> "${CONFIG}" <<EOF
 
 # --- Appended by entrypoint.sh: force TUN capture + internal DNS ---
 tun:
   enable: true
   stack: system
   device: clash0
-  mtu: 1400
+  mtu: ${TUN_MTU}
   auto-route: true
   auto-detect-interface: true
 
