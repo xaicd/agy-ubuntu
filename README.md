@@ -5,6 +5,7 @@ Ubuntu 24.04 沙盒开发容器:内嵌 **Mihomo (Clash Meta) TUN** 全流量隔�
 - 100% 内部流量经 `clash0` TUN 虚拟网卡走代理
 - 完全隔离于宿主机网络(默认 bridge,非 `--network host`)
 - DNS 劫持(`resolv.conf → 127.0.0.1 → mihomo`)
+- 预装 **Node.js 22 LTS**(npm/npx)+ **pnpm**,可直接开发 Next.js
 
 ## 快速开始
 
@@ -44,7 +45,9 @@ PROXY= bash prepare-downloads.sh # 直连(不代理)
 
 - `downloads/mihomo` — mihomo v1.19.30+ Linux amd64(需支持订阅中的 `anytls` 协议)
 - `downloads/agy.tar.gz` — agy CLI(内含 `antigravity` 二进制,自动校验 sha512)
-- `downloads/debs/*.deb` — 基础工具的完整依赖闭包(77 个,通过 WSL Ubuntu 解析)
+- `downloads/node.tar.gz` — Node.js 22 LTS Linux x64(自带 npm/npx)
+- `downloads/pnpm.tar.gz` — pnpm standalone 单文件可执行
+- `downloads/debs/*.deb` — 基础工具的完整依赖闭包(98 个,通过 WSL Ubuntu 解析)
 
 ### 订阅(base64)
 
@@ -53,6 +56,24 @@ PROXY= bash prepare-downloads.sh # 直连(不代理)
 ### 节点与地域
 
 Gemini / Google AI 对**香港、澳门、台湾、俄罗斯**等地区不提供支持,entrypoint 已用 `exclude-filter` 排除这些地区,url-test 自动在美/日/新/韩等支持地区选择最快节点。
+
+## 版本标签与回滚
+
+`latest` 标签每次构建都会被覆盖,无法回滚。为此提供 `build.sh`:本地构建时自动额外打一个**日期标签** `chw717/ai-agy:<YYYYMMDD>`,历史版本得以保留:
+
+```bash
+bash build.sh                       # 构建 + 打当天日期标签 + 启动
+DATE_TAG=20260826 bash build.sh     # 指定日期(默认今天)
+```
+
+回滚到某天的镜像:
+
+```bash
+docker tag chw717/ai-agy:20260826 chw717/ai-agy:latest
+docker compose up -d
+```
+
+查看所有历史版本:`docker images chw717/ai-agy`。旧镜像在未 `docker image prune` 前,也可按 image ID 找回。
 
 ## 环境依赖
 

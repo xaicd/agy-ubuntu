@@ -121,6 +121,18 @@ fi
 printf 'nameserver 127.0.0.1\n' > /etc/resolv.conf
 
 #------------------------------------------------------------------------------
+# 4b. Disable agy's built-in auto-updater.
+#     agy 检查更新时会偷偷下载新版 + 重置登录态,在容器里没有控制终端,
+#     重置后 OAuth 浏览器跳转走不通,就出现「登录异常」。
+#     把 last_check 推到 2099 强制跳过本次检查;update.lock 保留存在阻止重启检查。
+#------------------------------------------------------------------------------
+if [ -d /root/.gemini/antigravity-cli/updater ]; then
+    touch /root/.gemini/antigravity-cli/updater/update.lock
+    echo "9999999999" > /root/.gemini/antigravity-cli/last_check.timestamp 2>/dev/null || true
+    echo "[entrypoint] agy auto-updater disabled (last_check 推到 2099).",
+fi
+
+#------------------------------------------------------------------------------
 # 5. Share host git identity + SSH keys (so git commit/push works in-container).
 #    Windows bind mounts give SSH keys wrong permissions — copy + chmod 600.
 #    GitHub HTTPS remotes are rewritten to SSH (uses the shared key, no PAT),
