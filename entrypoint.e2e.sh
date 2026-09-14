@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+#==============================================================================
+# entrypoint.e2e.sh — agy-e2e 容器入口
+#
+#   基于 entrypoint.sh 增加:
+#     - mihomo DIRECT 规则(127.0.0.0/8、10.0.2.0/24、172.17.0.0/16、10.0.0.0/8)
+#       防止 adb server / emulator 内部通信被代理劫持
+#     - 启动 adb server
+#     - 若 E2E_AUTOSTART_EMULATOR=1,异步 start-emulator.sh(不等 boot)
+#     - 加载 E2E 环境变量(ANDROID_HOME / PLAYWRIGHT_BROWSERS_PATH)
+#     - E2E 横幅
+#==============================================================================
+
+set -euo pipefail
+
+MIHOMO_DIR="/root/.config/mihomo"
+CONFIG="${MIHOMO_DIR}/config.yaml"
+LOG_FILE="/root/mihomo.log"
+
+ETH0_MTU="$(ip link show eth0 2>/dev/null | sed -n 's/.*mtu \([0-9]*\).*/\1/p')"
+TUN_MTU="${TUN_MTU:-${ETH0_MTU:-1500}}"
+
+#==============================================================================
+# 1. Build base config (同 entrypoint.sh)
+#==============================================================================
+mkdir -p "${MIHOMO_DIR}/providers"
+
+if [ -n "${CLASH_URL:-}" ]; then
+    echo "[entrypoint.e2e] CLASH_URL detected — configuring proxy-provider subscription..."
+    cat > "${CONFIG}" <<EOF
+mixed-port: 7890
+mode: rule
+log-level: info
+external-controller: 127.0.0.1:9090
+proxy-providers:
+  sub:
+    type: http
+    url: "${CLASH_URL}"
+    interval: 3600
+    path: ${MIHOMO_DIR}/providers/sub.yaml
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 300
+proxy-groups:
+  - name: PROXY
+    type: url-test
+    use:
+      - sub
+    filter: "^【.*(美国|日本|新加坡|韩国|加拿大|英国|德国|法国|荷兰|澳大利亚|新西兰)"
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+rules:
+  # --- E2E DIRECT rules (inserted by entrypoint.e2e.sh) ---
+  - IP-CIDR,127.0.0.0/8,DIRECT
+  - IP-CIDR,10.0.0.0/8,DIRECT
+  - IP-CIDR,10.0.2.0/24,DIRECT
+  - IP-CIDR,172.17.0.0/16,DIRECT
+  - MATCH,PROXY
+EOF
+else
+    echo "[entrypoint.e2e] No CLASH_URL — writing minimal fallback config." >&2
+    cat > "${CONFIG}" <<'EOF'
+mixed-port: 7890
+mode: rule
+log-level: info
+rules:
+  - IP-CIDR,127.0.0.0/8,DIRECT
+  - IP-CIDR,10.0.0.0/8,DIRECT
+  - IP-CIDR,172.17.0.0/16,DIRECT
+  - MATCH,DIRECT
+EOF
+fi
+
+#==============================================================================
+# 2. 清洗已有 tun:/dns: 段,再追加 E2E 段 + TUN/DNS
+#==============================================================================
+awk '
+    /^(tun|dns):/ { skip = 1; next }
+    skip && /^[^[:space:]#]/ { skip = 0 }
+    !skip { print }
+' "${CONFIG}" > "${CONFIG}.clean" && mv -f "${CONFIG}.clean" "${CONFIG}"
+
+cat >> "${CONFIG}" <<EOF
+
+# --- Appended by entrypoint.e2e.sh ---
+tun:
+  enable: true
+  stack: system
+  device: clash0
+  mtu: ${TUN_MTU}
+  auto-route: true
+  auto-detect-interface: true
+
+dns:
+  enable: true
+  listen: 127.0.0.1:53
+  enhanced-mode: fake-ip
+  nameserver:
+    - 223.5.5.5
+    - 114.114.114.114
+EOF
+
+#==============================================================================
+# 3. 启动 mihomo
+#==============================================================================
+echo "[entrypoint.e2e] Starting mihomo (logs: ${LOG_FILE}) ..."
+mihomo -d "${MIHOMO_DIR}" > "${LOG_FILE}" 2>&1 &
+
+sleep 3
+if ip link show clash0 >/dev/null 2>&1; then
+    echo "[entrypoint.e2e] TUN interface 'clash0' is up."
+else
+    echo "[entrypoint.e2e] WARNING: 'clash0' not visible yet — check ${LOG_FILE}" >&2
+fi
+
+printf 'nameserver 127.0.0.1\n' > /etc/resolv.conf
+
+#==============================================================================
+# 4. agy auto-updater 禁用(同 entrypoint.sh)
+#==============================================================================
+if [ -d /root/.gemini/antigravity-cli/updater ]; then
+    touch /root/.gemini/antigravity-cli/updater/update.lock
+    echo "9999999999" > /root/.gemini/antigravity-cli/last_check.timestamp 2>/dev/null || true
+    echo "[entrypoint.e2e] agy auto-updater disabled (last_check 推到 2099)."
+fi
+
+#==============================================================================
+# 5. git / SSH 共享(同 entrypoint.sh)
+#==============================================================================
+if [ -f /root/.gitconfig-host ]; then
+    cp /root/.gitconfig-host /root/.gitconfig
+    chmod 644 /root/.gitconfig
+    cat >> /root/.gitconfig <<'EOF'
+
+[url "git@github.com:"]
+    insteadOf = https://github.com/
+EOF
+    git config --global core.autocrlf false
+    git config --global core.filemode false
+    echo "[entrypoint.e2e] git identity shared (GitHub HTTPS → SSH rewrite enabled)."
+fi
+
+if [ -d /root/.ssh-host ] && [ -n "$(ls -A /root/.ssh-host 2>/dev/null)" ]; then
+    mkdir -p /root/.ssh
+    cp -r /root/.ssh-host/. /root/.ssh/ 2>/dev/null
+    chmod 700 /root/.ssh
+    chmod 600 /root/.ssh/id_* 2>/dev/null
+    chmod 644 /root/.ssh/*.pub /root/.ssh/known_hosts* 2>/dev/null
+    cat > /root/.ssh/config <<'EOF'
+Host github.com
+    HostName ssh.github.com
+    Port 443
+    User git
+    StrictHostKeyChecking accept-new
+EOF
+    chmod 600 /root/.ssh/config
+    echo "[entrypoint.e2e] SSH keys shared from host (~/.ssh)."
+fi
+
+#==============================================================================
+# 6. E2E 扩展 —— adb server + 可选 emulator
+#==============================================================================
+echo "[entrypoint.e2e] Starting adb server..."
+adb start-server 2>/dev/null || echo "[entrypoint.e2e] adb start-server 失败(可能缺 SDK)"
+
+# 检测 KVM
+if [ -e /dev/kvm ]; then
+    echo "[entrypoint.e2e] ✅ /dev/kvm 可用(硬件加速)"
+else
+    echo "[entrypoint.e2e] ⚠ /dev/kvm 不可用 — Android emulator 将以软件模式启动(慢)"
+    echo "[entrypoint.e2e]   Windows + WSL2 用户:需 BIOS 开启 nested virtualization"
+fi
+
+if [ "${E2E_AUTOSTART_EMULATOR:-0}" = "1" ]; then
+    echo "[entrypoint.e2e] E2E_AUTOSTART_EMULATOR=1 → 异步启动 emulator..."
+    nohup start-emulator.sh > /root/emulator-startup.log 2>&1 &
+    echo "[entrypoint.e2e] emulator 启动中(后台),日志 /root/emulator-startup.log"
+    echo "[entrypoint.e2e]   查状态: adb-status.sh"
+    echo "[entrypoint.e2e]   等 boot: agy-e2e wait-boot"
+fi
+
+#==============================================================================
+# 7. 欢迎横幅 + 交互 shell
+#==============================================================================
+cat <<'BANNER'
+
+==========================================================================
+   AGY-UBUNTU-E2E SANDBOX :: ISOLATED PROXY + AUTOMATION STACK ACTIVE
+==========================================================================
+
+   * Mihomo TUN mode     : ACTIVE   (clash0,DIRECT rules for adb/emulator)
+   * DNS hijack          : LOCKED   (127.0.0.0/8 → DIRECT)
+   * Agent-device CLI    : $(command -v agent-device >/dev/null && echo "READY" || echo "MISSING")
+   * agy-e2e bridge      : $(command -v agy-e2e >/dev/null && echo "READY" || echo "MISSING")
+   * adb                 : $(command -v adb >/dev/null && echo "READY" || echo "MISSING")
+   * Android emulator    : $([ "${E2E_AUTOSTART_EMULATOR:-0}" = "1" ] && echo "STARTING (async)" || echo "manual: start-emulator.sh")
+   * Playwright          : $([ -d "${PLAYWRIGHT_BROWSERS_PATH:-/root/.cache/ms-playwright}" ] && echo "READY (chromium+firefox+webkit)" || echo "MISSING")
+
+   Quick commands:
+       agy                         authenticate Antigravity
+       agy-e2e devices             list adb devices
+       agy-e2e info                emulator info
+       start-emulator.sh           boot Android emulator (waits for sys.boot_completed)
+       adb-status.sh               one-shot status dump
+       pw-init.sh                  run Playwright smoke tests
+
+   Artifacts (bind-mounted to ./workspace/e2e/ on host):
+       reports/   — playwright HTML + junit
+       videos/    — playwright .webm
+       traces/    — playwright trace.zip
+       recordings/— agent-device record/replay
+       screenshots/— adb screencap + agy-e2e screenshot
+       artifacts/ — generic attachments
+
+   Mihomo logs : /root/mihomo.log
+   Emulator log: /root/emulator.log
+
+==========================================================================
+
+BANNER
+
+exec /bin/bash

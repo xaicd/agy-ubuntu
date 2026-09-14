@@ -1,0 +1,94 @@
+###############################################################################
+# agy-ubuntu:e2e — 扩展镜像,叠加 Playwright / agent-device / Android emulator
+#
+#   FROM 已发布的 chw717/ai-agy:latest(基础沙盒,内嵌 mihomo TUN + agy + Node)
+#   增加:
+#     - Playwright 三引擎 headless 浏览器 + 系统依赖
+#     - agent-device SDK(CLI + Node API 桥接)
+#     - JDK 17 + Android SDK + Android 模拟器(API 30 google_apis x86_64)
+#
+# OFFLINE build: 所有新二进制通过 prepare-downloads.sh 预下载到 ./downloads/。
+# 构建过程不联网。
+###############################################################################
+
+# syntax=docker/dockerfile:1.7
+FROM chw717/ai-agy:latest
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ----- 路径 / 环境变量 -----
+# agy 已有 PATH 包含 /root/.local/bin
+ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
+ENV ANDROID_HOME=/opt/android/sdk
+ENV ANDROID_SDK_ROOT=/opt/android/sdk
+ENV JAVA_HOME=/opt/jdk-17
+ENV AVD_NAME="${AVD_NAME:-test30}"
+ENV ANDROID_API_LEVEL="${ANDROID_API_LEVEL:-30}"
+
+ENV PATH="${JAVA_HOME}/bin:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/emulator:${ANDROID_HOME}/system-tools:${PATH}"
+
+#==============================================================================
+# 1. Playwright 系统依赖(16 个 .deb,noble 上的 t64 变体)
+#==============================================================================
+COPY downloads/debs-playwright/ /tmp/debs/
+RUN dpkg --unpack /tmp/debs/*.deb && \
+    dpkg --configure -a && \
+    rm -rf /tmp/debs
+
+#==============================================================================
+# 2. JDK 17(Temurin,emulator 运行时依赖)
+#==============================================================================
+COPY downloads/jdk-17/ /opt/jdk-17/
+
+#==============================================================================
+# 3. Android SDK(platform-tools / emulator / system-image)
+#    licenses 预写 SHA1,免去运行时 sdkmanager --licenses
+#==============================================================================
+COPY downloads/android-sdk/ /opt/android/sdk/
+COPY downloads/android-sdk-licenses/ /opt/android/sdk/licenses/
+
+#==============================================================================
+# 4. Playwright 浏览器(chromium + firefox + webkit)
+#==============================================================================
+COPY downloads/pw-browsers/ /root/.cache/ms-playwright/
+
+#==============================================================================
+# 5. agent-device SDK(含 postinstall 产物)
+#==============================================================================
+COPY downloads/agent-device.tgz /tmp/agent-device.tgz
+RUN npm i -g /tmp/agent-device.tgz --omit=dev && \
+    rm -f /tmp/agent-device.tgz
+
+#==============================================================================
+# 6. E2E 桥接层(Node 包,封装 agent-device CLI 调用)
+#==============================================================================
+COPY scripts/agy-e2e-bridge/ /usr/local/lib/node_modules/agy-e2e-bridge/
+RUN ln -sf /usr/local/lib/node_modules/agy-e2e-bridge/cli.js /usr/local/bin/agy-e2e && \
+    chmod +x /usr/local/lib/node_modules/agy-e2e-bridge/cli.js
+
+#==============================================================================
+# 7. helper scripts
+#==============================================================================
+COPY scripts/start-emulator.sh /usr/local/bin/start-emulator.sh
+COPY scripts/adb-status.sh      /usr/local/bin/adb-status.sh
+COPY scripts/pw-init.sh         /usr/local/bin/pw-init.sh
+RUN chmod +x /usr/local/bin/start-emulator.sh \
+              /usr/local/bin/adb-status.sh \
+              /usr/local/bin/pw-init.sh
+
+#==============================================================================
+# 8. E2E entrypoint(覆盖基础 entrypoint,加 mihomo DIRECT 规则 + adb server + 可选 emulator)
+#==============================================================================
+COPY entrypoint.e2e.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+#==============================================================================
+# 9. e2e 目录占位(bind-mount ./workspace:/root/workspace 后,这些子目录自动可见)
+#==============================================================================
+RUN mkdir -p /root/workspace/e2e/{reports/videos,traces,recordings,screenshots,artifacts,smoke} && \
+    echo "# E2E artifacts (bind-mounted to ./workspace/e2e on host)" \
+        > /root/workspace/e2e/README.md
+
+WORKDIR /root/workspace
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
