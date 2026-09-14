@@ -121,6 +121,8 @@ E2E_BUILD=1 bash build.sh    # 同时构建 e2e 镜像,打 :e2e-<日期> 标签
 
 ### KVM / Android emulator
 
+预装组件(离线直下,非 sdkmanager):platform-tools 37.0.1、emulator 37.2.8(build 16259959)、system-image API 30 google_apis x86_64 r10、Temurin JDK 17。SDK 组件目录带手工生成的 `package.xml`,`avdmanager create avd` 已实测可用。
+
 ```bash
 # 在容器里检查 KVM
 ls -la /dev/kvm
@@ -139,9 +141,11 @@ adb-status.sh                      # 一键状态报告
 ### Playwright 三引擎
 
 ```bash
-pw-init.sh                          # 跑 ./workspace/e2e/smoke/playwright-smoke.spec.ts
+pw-init.sh                          # 首跑自动 npm install(@playwright/test),之后直接跑
 # 产物:/root/workspace/e2e/{reports,videos,traces,artifacts}
 ```
+
+浏览器二进制(chromium 1148 / firefox 1466 / webkit 2104,对应 playwright 1.49.0)已预装在镜像 `/root/.cache/ms-playwright/`,无需 `playwright install`。
 
 ### agent-device(CLI + Node API 桥接 + 包装命令)
 
@@ -190,4 +194,4 @@ smoke/                    # 冒烟脚本(源码)
 
 ### downloads/ 杂项
 
-`downloads/crane.exe` 与 `downloads/crane.tar.gz` 是早期实验遗留(不在 prepare-downloads 脚本里),无害,可手动删除。
+早期实验遗留(`crane.exe` / `crane.tar.gz` / `cmdline-tools.zip` / `pw-cli/`)已清理;`downloads/` 只保留 Dockerfile 实际 COPY 的产物(见 `.dockerignore`)。

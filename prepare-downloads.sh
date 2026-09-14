@@ -457,12 +457,20 @@ else
     pw_fetch "firefox/${PW_REV_FIREFOX}/firefox-ubuntu-${PW_UBUNTU}.zip" firefox-linux.zip
     pw_fetch "webkit/${PW_REV_WEBKIT}/webkit-ubuntu-${PW_UBUNTU}.zip" webkit-linux.zip
     pw_fetch "ffmpeg/${PW_REV_FFMPEG}/ffmpeg-linux.zip" ffmpeg-linux.zip
-    rm -rf "$PW_DIR"/chromium-* "$PW_DIR"/firefox-* "$PW_DIR"/webkit-* "$PW_DIR"/ffmpeg-* 2>/dev/null || true
-    for z in chromium-linux.zip headless-shell-linux.zip firefox-linux.zip webkit-linux.zip ffmpeg-linux.zip; do
-        unzip -q "$DL_DIR/$z" -d "$PW_DIR/"
-        rm -f "$DL_DIR/$z"
-    done
-    # zip 顶层目录名与 playwright 期望一致(chromium-1148 / chromium_headless_shell-1148 / ...),
+    rm -rf "$PW_DIR"/chromium-[0-9]* "$PW_DIR"/chromium_headless_shell-[0-9]* \
+           "$PW_DIR"/firefox-[0-9]* "$PW_DIR"/webkit-[0-9]* "$PW_DIR"/ffmpeg-[0-9]* 2>/dev/null || true
+    # zip 顶层是 chrome-linux/ / firefox/ 等,playwright 布局要求外面再包一层
+    # <browser>-<revision>/(如 chromium-1148/chrome-linux/chrome)
+    pw_unpack() {  # $1=zip  $2=目标目录名
+        mkdir -p "$PW_DIR/$2"
+        unzip -q "$DL_DIR/$1" -d "$PW_DIR/$2/"
+        rm -f "$DL_DIR/$1"
+    }
+    pw_unpack chromium-linux.zip    "chromium-${PW_REV_CHROMIUM}"
+    pw_unpack headless-shell-linux.zip "chromium_headless_shell-${PW_REV_HEADLESS}"
+    pw_unpack firefox-linux.zip     "firefox-${PW_REV_FIREFOX}"
+    pw_unpack webkit-linux.zip      "webkit-${PW_REV_WEBKIT}"
+    pw_unpack ffmpeg-linux.zip      "ffmpeg-${PW_REV_FFMPEG}"
     # 补 INSTALLATION_COMPLETE 标记(playwright 启动时校验)
     for d in "$PW_DIR"/chromium-[0-9]* "$PW_DIR"/chromium_headless_shell-[0-9]* \
              "$PW_DIR"/firefox-[0-9]* "$PW_DIR"/webkit-[0-9]* "$PW_DIR"/ffmpeg-[0-9]*; do
