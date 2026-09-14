@@ -16,3 +16,4 @@ agy-home/
 # ===== 备份/杂项 =====
 *.tar
 *.tar.gz
+downloads-prepare.log

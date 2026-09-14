@@ -14,12 +14,17 @@ if [ -d /root/workspace/e2e/smoke ]; then
     cd /root/workspace/e2e/smoke
 fi
 
-# 若有 node_modules,跑本地的 playwright;否则用全局
-if [ -x node_modules/.bin/playwright ]; then
-    BIN=./node_modules/.bin/playwright
-else
-    BIN=npx --no-install playwright
+# 若无 node_modules(首次跑),先离线不成立 → 联网装(容器内流量走 mihomo TUN)
+if [ ! -x node_modules/.bin/playwright ]; then
+    if [ -f package.json ]; then
+        echo "[pw] node_modules 缺失 → npm install(经 mihomo)..."
+        npm install --no-audit --no-fund || { echo "[pw] ❌ npm install 失败" >&2; exit 1; }
+    else
+        echo "[pw] ❌ 未找到 package.json / node_modules" >&2
+        exit 1
+    fi
 fi
+BIN=./node_modules/.bin/playwright
 
 echo "[pw] cwd=$(pwd)"
 echo "[pw] reporters=html,junit"

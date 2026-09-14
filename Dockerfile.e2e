@@ -85,7 +85,13 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 #==============================================================================
 # 9. e2e 目录占位(bind-mount ./workspace:/root/workspace 后,这些子目录自动可见)
 #==============================================================================
-RUN mkdir -p /root/workspace/e2e/{reports/videos,traces,recordings,screenshots,artifacts,smoke} && \
+RUN mkdir -p /root/workspace/e2e/reports/videos \
+                /root/workspace/e2e/reports/junit \
+                /root/workspace/e2e/traces \
+                /root/workspace/e2e/recordings \
+                /root/workspace/e2e/screenshots \
+                /root/workspace/e2e/artifacts \
+                /root/workspace/e2e/smoke && \
     echo "# E2E artifacts (bind-mounted to ./workspace/e2e on host)" \
         > /root/workspace/e2e/README.md
 

@@ -3,7 +3,15 @@
 // 假定:start-emulator.sh 已经完成(adb-status.sh 显示 sys.boot_completed=1)。
 // 若 emulator 未启动,会打印明确错误并以非零退出。
 
-import { AgentDevice } from 'agy-e2e-bridge';
+// agy-e2e-bridge 已全局装进镜像(/usr/local/lib/node_modules/agy-e2e-bridge,CJS)。
+// ESM 里用绝对路径动态 import + default interop;宿主调试可用 AGY_E2E_BRIDGE 覆盖。
+const BRIDGE_URL = new URL(
+  process.env.AGY_E2E_BRIDGE || '/usr/local/lib/node_modules/agy-e2e-bridge/index.js',
+  'file:///'
+).href;
+const bridgeMod = await import(BRIDGE_URL);
+const { AgentDevice } = bridgeMod.AgentDevice ? bridgeMod : bridgeMod.default;
+
 import fs from 'node:fs/promises';
 import path from 'node:path';
 

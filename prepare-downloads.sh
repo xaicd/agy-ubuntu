@@ -51,11 +51,69 @@ DL_DIR="$SCRIPT_DIR/downloads"
 mkdir -p "$DL_DIR/debs"
 
 # ---------- 工具函数 ----------
-curldl() {  # $1=url  $2=输出文件(带重试)
-    local url="$1" out="$2" px=()
+# Windows + Git for Windows 自带的 curl 用 Schannel,某些 GitHub release asset URL
+# 在 mihomo 代理下会被 schannel 标 SEC_E_DECRYPT_FAILURE(0x80090330)即使实际下载成功。
+# 实际行为:每条连接大约在 ~3MB 处被代理/服务端 RST,但 SEC_E 报上来时文件其实已
+# 写入。解决:不用 -f + --retry 没用,改用 --resume 断点续传 + 死循环直到文件大小稳定。
+#
+# 工具函数:
+#   curldl URL OUT [EXPECTED_SIZE]   断点续传下完,EXPECTED_SIZE 给定则达到才返回成功
+#   curlget URL                       抓 stdout body,容忍 schannel stderr 噪声
+curldl() {  # $1=url  $2=输出文件  $3=期望大小(可选,字节)
+    local url="$1" out="$2" expected="${3:-0}" px=()
     [ -n "$PROXY" ] && px=(-x "$PROXY")
     echo "    下载: $url"
-    curl -fsSL --retry 8 --retry-all-errors --retry-delay 2 "${px[@]}" -o "$out" "$url"
+    local prev_size=0
+    local stable=0
+    for attempt in $(seq 1 1500); do
+        local size
+        size=$(stat -c%s "$out" 2>/dev/null || echo 0)
+        # 完成判定 1:达到 expected
+        if [ "$expected" -gt 0 ] && [ "$size" -ge "$expected" ]; then
+            echo "    ✓ 下载完成($size 字节,共 $((attempt-1)) 次续传)"
+            return 0
+        fi
+        # 完成判定 2:无 expected,大小稳定 5 次循环 → 视为完成
+        #           有 expected,大小 ≥ expected 的 95% 且稳定 5 次循环 → 文件很可能已下完
+        #           (服务端 Content-Length 偶尔比真实文件小,或 expected 是估计值)
+        local threshold="$expected"
+        if [ "$expected" -gt 0 ]; then
+            threshold=$((expected * 95 / 100))
+        fi
+        if [ "$size" -gt 0 ] && [ "$size" -eq "$prev_size" ]; then
+            stable=$((stable + 1))
+            if [ "$stable" -ge 5 ]; then
+                if [ "$expected" = "0" ] || [ "$size" -ge "$threshold" ]; then
+                    echo "    ✓ 下载稳定($size 字节,共 $((attempt-1)) 次续传)"
+                    return 0
+                fi
+                echo "    ❌ 5 次循环文件大小未增长(当前 $size 字节,期望 $expected)" >&2
+                return 1
+            fi
+        else
+            stable=0
+        fi
+        prev_size="$size"
+        curl -sSL --tlsv1.2 --max-time 120 -C - "${px[@]}" "$url" -o "$out" 2>/dev/null || true
+    done
+    echo "    ❌ 超过 1500 次续传仍未完成" >&2
+    return 1
+}
+
+# curlget — 抓 URL 到 stdout(容忍 schannel stderr 噪声),HTTP 2xx 时回 body
+curlget() {  # $1=url
+    local url="$1" px=()
+    [ -n "$PROXY" ] && px=(-x "$PROXY")
+    local body http_code
+    body="$(curl -sSL --tlsv1.2 --max-time 60 \
+        --retry 5 --retry-all-errors --retry-delay 2 \
+        "${px[@]}" -w '\n__HTTP_CODE__:%{http_code}' "$url" 2>/dev/null || true)"
+    http_code="$(echo "$body" | sed -n 's/.*__HTTP_CODE__:\([0-9]*\)$/\1/p')"
+    body="$(echo "$body" | sed 's/__HTTP_CODE__:[0-9]*$//')"
+    case "$http_code" in
+        2*) [ -n "$body" ] && { echo "$body"; return 0; } ;;
+    esac
+    return 1
 }
 
 # ---------- 1. mihomo ----------
@@ -75,7 +133,7 @@ echo "[2/5] agy CLI"
 if [ -s "$DL_DIR/agy.tar.gz" ]; then
     echo "    已存在,跳过 ($(du -h "$DL_DIR/agy.tar.gz" | cut -f1))"
 else
-    manifest_json="$(curl -fsSL ${PROXY:+-x "$PROXY"} "$AGY_MANIFEST")"
+    manifest_json="$(curlget "$AGY_MANIFEST")" || { echo "    ❌ agy manifest 拉取失败" >&2; exit 1; }
     agy_url="$(echo "$manifest_json" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     agy_sha="$(echo "$manifest_json" | sed -n 's/.*"sha512"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     [ -n "$agy_url" ] || { echo "    ❌ 解析 manifest 失败" >&2; exit 1; }
@@ -122,7 +180,7 @@ if [ -s "$DL_DIR/node.tar.gz" ]; then
 else
     if [ -z "$NODE_VERSION" ]; then
         # index.json 按发布倒序排列,取第一个 v22.* 即最新 LTS
-        curl -fsSL ${PROXY:+-x "$PROXY"} https://nodejs.org/dist/index.json -o "$DL_DIR/node-index.json"
+        curlget 'https://nodejs.org/dist/index.json' > "$DL_DIR/node-index.json" || { echo "    ❌ Node index 拉取失败" >&2; exit 1; }
         NODE_VERSION="$(grep -m1 -o '"version":"v22\.[0-9.]*"' "$DL_DIR/node-index.json" | sed 's/.*"\(v[0-9.]*\)"/\1/')"
         rm -f "$DL_DIR/node-index.json"
         [ -n "$NODE_VERSION" ] || { echo "    ❌ 解析 Node 版本失败" >&2; exit 1; }
@@ -153,105 +211,264 @@ fi
 
 # ---------- 6. JDK 17(Temurin Linux x64) ----------
 echo "[6/10] JDK ${JDK_VERSION} (Temurin)"
-JDK_DIR="$DL_DIR/jdk-${JDK_VERSION}"
+JDK_DIR="$DL_DIR/jdk-17"
 if [ -x "$JDK_DIR/bin/java" ]; then
     echo "    已存在,跳过 ($(du -sh "$JDK_DIR" | cut -f1))"
 else
-    rm -rf "$JDK_DIR"
+    rm -rf "$JDK_DIR" "$DL_DIR/jdk.tar.gz"
     mkdir -p "$JDK_DIR"
-    # Adoptium 路径:https://github.com/adoptium/temurin17-binaries/releases
-    JDK_URL="https://github.com/adoptium/temurin17-binaries/releases/download/jdk-${JDK_VERSION}%2B10/OpenJDK17U-jdk_x64_linux_hotspot_${JDK_VERSION}_10.tar.gz"
-    curldl "$JDK_URL" "$DL_DIR/jdk.tar.gz"
-    tar -xzf "$DL_DIR/jdk.tar.gz" -C "$JDK_DIR" --strip-components=1
+    # Adoptium 资产名带 build 号后缀(如 _1 / _10),硬编码会随版本变。
+    # 用 GitHub API 自动解析最新 tag + 对应 linux_x64 hotspot tarball URL。
+    echo "    解析 Adoptium 最新 release assets..."
+    REL_JSON="$(curlget 'https://api.github.com/repos/adoptium/temurin17-binaries/releases/latest')" || { echo "    ❌ Adoptium API 拉取失败" >&2; exit 1; }
+    JDK_URL="$(echo "$REL_JSON" | \
+        grep 'browser_download_url' | \
+        grep 'jdk_x64_linux_hotspot' | \
+        grep '\.tar\.gz"' | \
+        head -1 | sed -n 's/.*"\(https:\/\/[^"]*\)".*/\1/p')"
+    if [ -z "$JDK_URL" ]; then
+        echo "    ❌ 解析 Temurin Linux x64 hotspot tarball URL 失败" >&2
+        exit 1
+    fi
+    echo "    使用 $(basename "$JDK_URL")"
+
+    # HEAD 探测期望大小(配合 curldl 断点续传校验完整性)
+    JDK_SIZE="$(curl -sIL --tlsv1.2 --max-time 30 -x "${PROXY:-}" "$JDK_URL" 2>/dev/null | \
+        awk 'tolower($1) == "content-length:" { print $2 }' | tail -1 | tr -d '\r')"
+    [ -n "$JDK_SIZE" ] && echo "    期望大小: $JDK_SIZE 字节"
+
+    curldl "$JDK_URL" "$DL_DIR/jdk.tar.gz" "${JDK_SIZE:-0}"
+    if ! tar -xzf "$DL_DIR/jdk.tar.gz" -C "$JDK_DIR" --strip-components=1 2>/dev/null; then
+        echo "    ❌ jdk.tar.gz 解压失败,已删除残留文件,请重跑" >&2
+        rm -f "$DL_DIR/jdk.tar.gz"
+        exit 1
+    fi
     rm -f "$DL_DIR/jdk.tar.gz"
     echo "    ✓ $(du -sh "$JDK_DIR" | cut -f1)"
 fi
 
-# ---------- 7. Android SDK(命令行工具 + 离线 SDK 包) ----------
+# ---------- 7. Android SDK(direct curl 拉 platform-tools + emulator + system-image) ----------
 echo "[7/10] Android SDK (API ${ANDROID_API} ${ANDROID_VARIANT} x86_64)"
 ANDROID_SDK_DIR="$DL_DIR/android-sdk"
-CMDLINE_TOOLS_VERSION="${CMDLINE_TOOLS_VERSION:-11076708}"  # latest
 
-if [ -d "$ANDROID_SDK_DIR/emulator" ] && [ -d "$ANDROID_SDK_DIR/system-images" ]; then
-    echo "    已存在,跳过 ($(du -sh "$ANDROID_SDK_DIR" | cut -f1))"
+# 不再用 sdkmanager(它需要 Java 17 + Linux + WSL 路径翻译有 bug)。直接从 dl.google.com
+# 拉 zip,手工解压到 $ANDROID_SDK_DIR/,再写 license SHA1 文件(emulator/adb 启动时不报错)。
+
+# 7a) commandlinetools zip(暂时不需要 sdkmanager,但留 cmdline-tools/latest/ 以便
+#     容器内如果升级 SDK 有 sdkmanager 可用 —— 体积不大,留着)
+CMDLINE_TOOLS_VERSION="${CMDLINE_TOOLS_VERSION:-11076708}"
+if [ -x "$ANDROID_SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
+    echo "    cmdline-tools 已存在,跳过"
 else
-    # 7a) commandlinetools zip
-    if [ ! -f "$DL_DIR/cmdline-tools.zip" ]; then
-        curldl "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip" "$DL_DIR/cmdline-tools.zip"
+    CMDLINE_URL="https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
+    if [ ! -s "$DL_DIR/cmdline-tools.zip" ] || [ "$(stat -c%s "$DL_DIR/cmdline-tools.zip" 2>/dev/null || echo 0)" -lt 100000000 ]; then
+        CMDLINE_SIZE="$(curl -sIL --tlsv1.2 --max-time 30 -x "${PROXY:-}" "$CMDLINE_URL" 2>/dev/null | \
+            awk 'tolower($1) == "content-length:" { print $2 }' | tail -1 | tr -d '\r')"
+        [ -n "$CMDLINE_SIZE" ] && echo "    cmdline-tools 期望大小: $CMDLINE_SIZE 字节"
+        curldl "$CMDLINE_URL" "$DL_DIR/cmdline-tools.zip" "${CMDLINE_SIZE:-0}"
+    fi
+    if ! command -v unzip >/dev/null 2>&1; then
+        echo "    ❌ 需要 unzip 命令(Git Bash 自带)" >&2; exit 1
+    fi
+    rm -rf "$ANDROID_SDK_DIR/cmdline-tools-tmp" "$ANDROID_SDK_DIR/cmdline-tools"
+    mkdir -p "$ANDROID_SDK_DIR/cmdline-tools-tmp"
+    unzip -q "$DL_DIR/cmdline-tools.zip" -d "$ANDROID_SDK_DIR/cmdline-tools-tmp/"
+    if [ ! -d "$ANDROID_SDK_DIR/cmdline-tools-tmp/cmdline-tools" ]; then
+        echo "    ❌ cmdline-tools zip 顶层目录不是 cmdline-tools/" >&2; exit 1
     fi
     mkdir -p "$ANDROID_SDK_DIR/cmdline-tools"
-    if command -v unzip >/dev/null 2>&1; then
-        unzip -q "$DL_DIR/cmdline-tools.zip" -d "$ANDROID_SDK_DIR/cmdline-tools/"
-    else
-        # fallback:Git Bash 的 tar 可解 zip?不行,需 unzip;给出明确错误
-        echo "    ❌ 需要 unzip 命令(Git Bash 自带或 WSL Ubuntu)" >&2
-        exit 1
-    fi
-    # 重命名 cmdline-tools/* → cmdline-tools/latest(sdkmanager 要求)
-    if [ -d "$ANDROID_SDK_DIR/cmdline-tools/cmdline-tools" ]; then
-        mv "$ANDROID_SDK_DIR/cmdline-tools/cmdline-tools" "$ANDROID_SDK_DIR/cmdline-tools/latest"
-    fi
-
-    # 7b) 用 sdkmanager 离线下载其他组件(走代理)
-    export ANDROID_HOME="$ANDROID_SDK_DIR"
-    export ANDROID_SDK_ROOT="$ANDROID_SDK_DIR"
-    export PATH="$ANDROID_SDK_DIR/cmdline-tools/latest/bin:$ANDROID_SDK_DIR/platform-tools:$PATH"
-    # 接受 license(无声模式)
-    yes 2>/dev/null | sdkmanager --licenses >/dev/null 2>&1 || true
-
-    echo "    安装 platform-tools / platforms / emulator / system-image..."
-    sdkmanager ${PROXY:+--proxy=http} ${PROXY:+--proxy_host=127.0.0.1} ${PROXY:+--proxy_port=7890} \
-        "platform-tools" \
-        "platforms;android-${ANDROID_API}" \
-        "emulator" \
-        "system-images;android-${ANDROID_API};${ANDROID_VARIANT};x86_64"
-
-    # 7c) 备份 licenses(供 Dockerfile.e2e COPY,免去运行时 sdkmanager --licenses)
-    mkdir -p "$DL_DIR/android-sdk-licenses"
-    if [ -d "$ANDROID_SDK_DIR/licenses" ]; then
-        cp -r "$ANDROID_SDK_DIR/licenses/." "$DL_DIR/android-sdk-licenses/"
-    fi
-
-    echo "    ✓ $(du -sh "$ANDROID_SDK_DIR" | cut -f1)"
+    mv "$ANDROID_SDK_DIR/cmdline-tools-tmp/cmdline-tools" "$ANDROID_SDK_DIR/cmdline-tools/latest"
+    rm -rf "$ANDROID_SDK_DIR/cmdline-tools-tmp"
+    echo "    ✓ cmdline-tools $(du -sh "$ANDROID_SDK_DIR/cmdline-tools" | cut -f1)"
 fi
 
-# ---------- 8. agent-device SDK(npm pack + postinstall 完整解析树) ----------
+# 7b) platform-tools
+if [ -x "$ANDROID_SDK_DIR/platform-tools/adb" ]; then
+    echo "    platform-tools 已存在,跳过"
+else
+    PT_URL="https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip"
+    PT_SIZE="$(curl -sIL --tlsv1.2 --max-time 30 -x "${PROXY:-}" "$PT_URL" 2>/dev/null | \
+        awk 'tolower($1) == "content-length:" { print $2 }' | tail -1 | tr -d '\r')"
+    [ -n "$PT_SIZE" ] && echo "    platform-tools 期望大小: $PT_SIZE 字节"
+    curldl "$PT_URL" "$DL_DIR/platform-tools.zip" "${PT_SIZE:-0}"
+    rm -rf "$ANDROID_SDK_DIR/platform-tools"
+    unzip -q "$DL_DIR/platform-tools.zip" -d "$ANDROID_SDK_DIR/"
+    rm -f "$DL_DIR/platform-tools.zip"
+    echo "    ✓ platform-tools $(du -sh "$ANDROID_SDK_DIR/platform-tools" | cut -f1)"
+fi
+
+# 7c) emulator
+if [ -x "$ANDROID_SDK_DIR/emulator/emulator" ]; then
+    echo "    emulator 已存在,跳过"
+else
+    # emulator 版本号(从 dl.google.com repository2-3.xml 解析得到,16259959 是较新版)
+    EMU_VER="${EMULATOR_VERSION:-16259959}"
+    EMU_URL="https://dl.google.com/android/repository/emulator-linux_x64-${EMU_VER}.zip"
+    EMU_SIZE="$(curl -sIL --tlsv1.2 --max-time 30 -x "${PROXY:-}" "$EMU_URL" 2>/dev/null | \
+        awk 'tolower($1) == "content-length:" { print $2 }' | tail -1 | tr -d '\r')"
+    [ -n "$EMU_SIZE" ] && echo "    emulator 期望大小: $EMU_SIZE 字节"
+    curldl "$EMU_URL" "$DL_DIR/emulator.zip" "${EMU_SIZE:-0}"
+    rm -rf "$ANDROID_SDK_DIR/emulator"
+    unzip -q "$DL_DIR/emulator.zip" -d "$ANDROID_SDK_DIR/"
+    rm -f "$DL_DIR/emulator.zip"
+    echo "    ✓ emulator $(du -sh "$ANDROID_SDK_DIR/emulator" | cut -f1)"
+fi
+
+# 7d) system-image(API ${ANDROID_API} ${ANDROID_VARIANT} x86_64)
+#     zip 顶层目录是 x86_64/,sdkmanager 布局要求 system-images/<api>/<variant>/x86_64/
+SYSIMG_DIR="$ANDROID_SDK_DIR/system-images/android-${ANDROID_API}/${ANDROID_VARIANT}/x86_64"
+if [ -d "$SYSIMG_DIR" ] && [ -f "$SYSIMG_DIR/package.xml" ]; then
+    echo "    system-image 已存在,跳过 ($(du -sh "$SYSIMG_DIR" | cut -f1))"
+else
+    SYSIMG_REV="${SYSIMG_REV:-r10}"  # API 30 google_apis x86_64 r10 是稳定版
+    SI_URL="https://dl.google.com/android/repository/sys-img/${ANDROID_VARIANT}/x86_64-${ANDROID_API}_${SYSIMG_REV}.zip"
+    SI_SIZE="$(curl -sIL --tlsv1.2 --max-time 30 -x "${PROXY:-}" "$SI_URL" 2>/dev/null | \
+        awk 'tolower($1) == "content-length:" { print $2 }' | tail -1 | tr -d '\r')"
+    [ -n "$SI_SIZE" ] && echo "    system-image 期望大小: $SI_SIZE 字节(约 $((SI_SIZE / 1024 / 1024)) MB)"
+    curldl "$SI_URL" "$DL_DIR/sysimg.zip" "${SI_SIZE:-0}"
+    rm -rf "$ANDROID_SDK_DIR/system-images"
+    mkdir -p "$ANDROID_SDK_DIR/system-images/_tmp" \
+             "$ANDROID_SDK_DIR/system-images/android-${ANDROID_API}/${ANDROID_VARIANT}"
+    unzip -q "$DL_DIR/sysimg.zip" -d "$ANDROID_SDK_DIR/system-images/_tmp/"
+    mv "$ANDROID_SDK_DIR/system-images/_tmp/x86_64" "$SYSIMG_DIR"
+    rm -rf "$ANDROID_SDK_DIR/system-images/_tmp"
+    rm -f "$DL_DIR/sysimg.zip"
+    echo "    ✓ system-image $(du -sh "$SYSIMG_DIR" | cut -f1)"
+fi
+
+# 7e) package.xml(sdkmanager 安装时会生成;手工直下没有,avdmanager 靠它识别包)
+#     schema xsi:type 的 QName:system-image 用 sys-img2/03 的 sysImgDetailsType,
+#     emulator/platform-tools 用 generic/02 的 genericDetailsType(实测通过)。
+cat > "$SYSIMG_DIR/package.xml" <<XMLEOF
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<ns2:repository xmlns:ns2="http://schemas.android.com/repository/android/common/02" xmlns:ns3="http://schemas.android.com/sdk/android/repo/sys-img2/03" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <localPackage path="system-images;android-${ANDROID_API};${ANDROID_VARIANT};x86_64" obsolete="false">
+    <type-details xsi:type="ns3:sysImgDetailsType">
+      <api-level>${ANDROID_API}</api-level>
+      <base-extension>true</base-extension>
+      <tag>
+        <id>${ANDROID_VARIANT}</id>
+        <display>Google APIs</display>
+      </tag>
+      <vendor>
+        <id>google</id>
+        <display>Google Inc.</display>
+      </vendor>
+      <abi>x86_64</abi>
+    </type-details>
+    <revision>
+      <major>10</major>
+    </revision>
+    <display-name>Google APIs Intel x86_64 Atom System Image</display-name>
+    <dependencies/>
+  </localPackage>
+</ns2:repository>
+XMLEOF
+cat > "$ANDROID_SDK_DIR/emulator/package.xml" <<XMLEOF
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<ns2:repository xmlns:ns2="http://schemas.android.com/repository/android/common/02" xmlns:ns3="http://schemas.android.com/repository/android/generic/02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <localPackage path="emulator" obsolete="false">
+    <type-details xsi:type="ns3:genericDetailsType"/>
+    <revision>
+      <major>37</major>
+      <minor>2</minor>
+      <micro>8</micro>
+    </revision>
+    <display-name>Android Emulator</display-name>
+    <dependencies/>
+  </localPackage>
+</ns2:repository>
+XMLEOF
+cat > "$ANDROID_SDK_DIR/platform-tools/package.xml" <<XMLEOF
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<ns2:repository xmlns:ns2="http://schemas.android.com/repository/android/common/02" xmlns:ns3="http://schemas.android.com/repository/android/generic/02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <localPackage path="platform-tools" obsolete="false">
+    <type-details xsi:type="ns3:genericDetailsType"/>
+    <revision>
+      <major>37</major>
+      <minor>0</minor>
+      <micro>1</micro>
+    </revision>
+    <display-name>Android SDK Platform-Tools</display-name>
+    <dependencies/>
+  </localPackage>
+</ns2:repository>
+XMLEOF
+
+# 7f) license SHA1 文件(emulator/adb 启动会读 $ANDROID_HOME/licenses/)
+mkdir -p "$DL_DIR/android-sdk-licenses"
+echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$DL_DIR/android-sdk-licenses/android-sdk-license"
+echo "84831b9409646a918e30573bab4c9c91346d8abd" > "$DL_DIR/android-sdk-licenses/android-sdk-preview-license"
+echo "d56f5187479451eabf01fb78af6dfcb131a6481e" > "$DL_DIR/android-sdk-licenses/intel-android-extra-license"
+
+echo "    ✓ Android SDK 总计 $(du -sh "$ANDROID_SDK_DIR" | cut -f1)"
+
+# ---------- 8. agent-device(直接下载 npm tarball) ----------
+# agent-device 零运行时依赖(workspace:* 全在 devDependencies),npm i -g 直接可用,
+# 不需要 postinstall 处理(实测 npm install 通过)。
 echo "[8/10] agent-device ${AGENT_DEVICE_VERSION}"
-if [ -s "$DL_DIR/agent-device.tgz" ]; then
+if [ -s "$DL_DIR/agent-device.tgz" ] && tar -tzf "$DL_DIR/agent-device.tgz" >/dev/null 2>&1; then
     echo "    已存在,跳过 ($(du -h "$DL_DIR/agent-device.tgz" | cut -f1))"
 else
-    if ! command -v npm >/dev/null 2>&1; then
-        echo "    ❌ 需要 npm 命令(先装 Node.js)" >&2
-        exit 1
+    if [ "$AGENT_DEVICE_VERSION" = "latest" ]; then
+        AD_JSON="$(curlget 'https://registry.npmjs.org/agent-device/latest')" || { echo "    ❌ npm registry 元数据拉取失败" >&2; exit 1; }
+        AGENT_DEVICE_VERSION="$(echo "$AD_JSON" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+        [ -n "$AGENT_DEVICE_VERSION" ] || { echo "    ❌ 解析 agent-device 版本失败" >&2; exit 1; }
     fi
-    STAGE_DIR="$(mktemp -d)"
-    trap "rm -rf '$STAGE_DIR'" EXIT
-    (cd "$STAGE_DIR" && \
-        npm pack agent-device@${AGENT_DEVICE_VERSION} ${PROXY:+--proxy "$PROXY"} && \
-        mkdir -p _pkg && tar -xzf agent-device-*.tgz -C _pkg && \
-        cd _pkg && \
-        npm install --omit=dev --no-audit --no-fund ${PROXY:+--proxy "$PROXY"} && \
-        tar -czf "$DL_DIR/agent-device.tgz" -C node_modules .)
+    echo "    使用 agent-device@${AGENT_DEVICE_VERSION}"
+    AD_URL="https://registry.npmjs.org/agent-device/-/agent-device-${AGENT_DEVICE_VERSION}.tgz"
+    AD_SIZE="$(curl -sIL --tlsv1.2 --max-time 30 -x "${PROXY:-}" "$AD_URL" 2>/dev/null | \
+        awk 'tolower($1) == "content-length:" { print $2 }' | tail -1 | tr -d '\r')"
+    curldl "$AD_URL" "$DL_DIR/agent-device.tgz" "${AD_SIZE:-0}"
+    tar -tzf "$DL_DIR/agent-device.tgz" >/dev/null 2>&1 || { echo "    ❌ tarball 校验失败" >&2; exit 1; }
     echo "    ✓ $(du -h "$DL_DIR/agent-device.tgz" | cut -f1)"
 fi
 
-# ---------- 9. Playwright 浏览器(chromium + firefox + webkit) ----------
-echo "[9/10] Playwright ${PLAYWRIGHT_VERSION} 浏览器"
+# ---------- 9. Playwright 浏览器(Linux 二进制,手动 curl) ----------
+# 不用 `npx playwright install`:azureedge CDN 在当前网络下 TLS 记录会被损坏,
+# node fetcher 只重试 3 次即放弃;宿主 curl + 断点续传能扛(同 JDK/sysimg)。
+# revisions 与 PLAYWRIGHT_VERSION 绑定(来自 playwright-core/browsers.json)。
+echo "[9/10] Playwright ${PLAYWRIGHT_VERSION} 浏览器(Linux)"
 PW_DIR="$DL_DIR/pw-browsers"
+PW_REV_CHROMIUM="${PW_REV_CHROMIUM:-1148}"           # 1.49.0
+PW_REV_HEADLESS="${PW_REV_HEADLESS:-1148}"           # 1.49.0
+PW_REV_FIREFOX="${PW_REV_FIREFOX:-1466}"             # 1.49.0
+PW_REV_WEBKIT="${PW_REV_WEBKIT:-2104}"               # 1.49.0
+PW_REV_FFMPEG="${PW_REV_FFMPEG:-1010}"               # 1.49.0
+PW_UBUNTU="${PW_UBUNTU:-24.04}"                      # 镜像目标 noble
+PW_HOST="https://cdn.playwright.dev/dbazure/download/playwright/builds"
 mkdir -p "$PW_DIR"
-if [ -d "$PW_DIR/chromium-"* ] || [ -d "$PW_DIR/firefox-"* ] || [ -d "$PW_DIR/webkit-"* ]; then
+pw_fetch() {  # $1=path后缀  $2=本地zip名
+    local url="${PW_HOST}/$1" out="$DL_DIR/$2"
+    local size
+    size="$(curl -sIL --tlsv1.2 --max-time 30 -x "${PROXY:-}" "$url" 2>/dev/null | \
+        awk 'tolower($1) == "content-length:" { print $2 }' | tail -1 | tr -d '\r')"
+    curldl "$url" "$out" "${size:-0}"
+}
+if [ -f "$PW_DIR/chromium-${PW_REV_CHROMIUM}/INSTALLATION_COMPLETE" ] && \
+   [ -f "$PW_DIR/chromium_headless_shell-${PW_REV_HEADLESS}/INSTALLATION_COMPLETE" ] && \
+   [ -f "$PW_DIR/firefox-${PW_REV_FIREFOX}/INSTALLATION_COMPLETE" ] && \
+   [ -f "$PW_DIR/webkit-${PW_REV_WEBKIT}/INSTALLATION_COMPLETE" ] && \
+   [ -f "$PW_DIR/ffmpeg-${PW_REV_FFMPEG}/INSTALLATION_COMPLETE" ]; then
     echo "    已存在,跳过 ($(du -sh "$PW_DIR" | cut -f1))"
 else
-    if ! command -v npm >/dev/null 2>&1; then
-        echo "    ❌ 需要 npm 命令(先装 Node.js)" >&2
-        exit 1
-    fi
-    STAGE_DIR="$(mktemp -d)"
-    trap "rm -rf '$STAGE_DIR'" EXIT
-    (cd "$STAGE_DIR" && \
-        npm init -y >/dev/null && \
-        npm install playwright@${PLAYWRIGHT_VERSION} --no-audit --no-fund ${PROXY:+--proxy "$PROXY"} >/dev/null && \
-        PLAYWRIGHT_BROWSERS_PATH="$PW_DIR" npx playwright install chromium firefox webkit)
+    pw_fetch "chromium/${PW_REV_CHROMIUM}/chromium-linux.zip" chromium-linux.zip
+    pw_fetch "chromium/${PW_REV_HEADLESS}/chromium-headless-shell-linux.zip" headless-shell-linux.zip
+    pw_fetch "firefox/${PW_REV_FIREFOX}/firefox-ubuntu-${PW_UBUNTU}.zip" firefox-linux.zip
+    pw_fetch "webkit/${PW_REV_WEBKIT}/webkit-ubuntu-${PW_UBUNTU}.zip" webkit-linux.zip
+    pw_fetch "ffmpeg/${PW_REV_FFMPEG}/ffmpeg-linux.zip" ffmpeg-linux.zip
+    rm -rf "$PW_DIR"/chromium-* "$PW_DIR"/firefox-* "$PW_DIR"/webkit-* "$PW_DIR"/ffmpeg-* 2>/dev/null || true
+    for z in chromium-linux.zip headless-shell-linux.zip firefox-linux.zip webkit-linux.zip ffmpeg-linux.zip; do
+        unzip -q "$DL_DIR/$z" -d "$PW_DIR/"
+        rm -f "$DL_DIR/$z"
+    done
+    # zip 顶层目录名与 playwright 期望一致(chromium-1148 / chromium_headless_shell-1148 / ...),
+    # 补 INSTALLATION_COMPLETE 标记(playwright 启动时校验)
+    for d in "$PW_DIR"/chromium-[0-9]* "$PW_DIR"/chromium_headless_shell-[0-9]* \
+             "$PW_DIR"/firefox-[0-9]* "$PW_DIR"/webkit-[0-9]* "$PW_DIR"/ffmpeg-[0-9]*; do
+        [ -d "$d" ] && touch "$d/INSTALLATION_COMPLETE"
+    done
+    chmod -R +x "$PW_DIR" 2>/dev/null || true
     echo "    ✓ $(du -sh "$PW_DIR" | cut -f1)"
 fi
 
@@ -269,22 +486,29 @@ else
     fi
     wsl_pw_debs="$(echo "$PW_DEBS" | sed 's|^/\([a-zA-Z]\)|/mnt/\1|')"
     echo "    通过 WSL($WSL_DISTRO)+ 阿里云镜像解析 Playwright 系统依赖..."
+    # noble 上包名是 t64 变体(libatk1.0-0t64 等);apt 对不存在的包名整体失败,
+    # 所以先试 t64 名单,失败再回退旧名。
     wsl -d "$WSL_DISTRO" -u root -- bash -c "
 set -e
 echo 'deb [trusted=yes] https://mirrors.aliyun.com/ubuntu noble main universe restricted multiverse' > /etc/apt/sources.list
 echo 'deb [trusted=yes] https://mirrors.aliyun.com/ubuntu noble-updates main universe' >> /etc/apt/sources.list
 echo 'deb [trusted=yes] https://mirrors.aliyun.com/ubuntu noble-security main universe' >> /etc/apt/sources.list
-apt-get update >/dev/null
+apt-get update >/dev/null 2>&1
+apt-get install --download-only -y --no-install-recommends \
+    -o Dir::State::status=/dev/null -o Dir::State::extended_states=/dev/null \
+    libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 \
+    libdbus-1-3 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 \
+    libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 \
+    libpango-1.0-0 libcairo2 libasound2t64 >/dev/null 2>&1 || \
 apt-get install --download-only -y --no-install-recommends \
     -o Dir::State::status=/dev/null -o Dir::State::extended_states=/dev/null \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
     libdbus-1-3 libxkbcommon0 libatspi2.0-0 libx11-6 libxcomposite1 \
     libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 \
-    libpango-1.0-0 libcairo2 libasound2t64 >/dev/null
+    libpango-1.0-0 libcairo2 libasound2t64
 mkdir -p '$wsl_pw_debs'
 cp -f /var/cache/apt/archives/*.deb '$wsl_pw_debs/' 2>/dev/null || true
-# apt 不会重复下载已装的包,但目标系统是 noble,镜像用 noble,所以应该全装
-echo '    共下载:' \$(ls '$wsl_pw_debs'/*.deb 2>/dev/null | wc -l) '个 .deb'
+echo '    WSL 内共下载:' \$(ls '$wsl_pw_debs'/*.deb 2>/dev/null | wc -l) '个 .deb'
 "
     echo "    ✓ $(ls "$PW_DEBS"/*.deb 2>/dev/null | wc -l) 个 .deb"
 fi

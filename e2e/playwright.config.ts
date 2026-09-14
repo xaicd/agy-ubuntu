@@ -18,7 +18,7 @@ export default defineConfig({
   use: {
     baseURL: 'https://example.com',
     trace: 'on',
-    video: 'on',
+    video: { mode: 'on', dir: '/root/workspace/e2e/videos' },
     screenshot: 'on',
     actionTimeout: 10_000,
     navigationTimeout: 30_000,
