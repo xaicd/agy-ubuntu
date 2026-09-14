@@ -87,7 +87,10 @@ docker compose up -d
 | 镜像 | 文件 | 适用场景 |
 |------|------|---------|
 | `chw717/ai-agy:latest` | `Dockerfile` | 只跑 `agy` / Node / pnpm(默认) |
-| `chw717/ai-agy:e2e` | `Dockerfile.e2e` | 跑 Playwright / agent-device / Android emulator |
+| `chw717/ai-agy:e2e` | `Dockerfile.e2e` | 跑 Playwright / agent-device / Android emulator(12.3GB,raw 镜像) |
+| `chw717/ai-agy:e2e-slim` | `Dockerfile.e2e` | 同上,**9.8GB 瘦身版**(system/vendor.img 压缩 qcow2 + dpkg 层优化;emulator boot 实测兼容) |
+
+> slim 与 e2e 功能完全一致;system.img / vendor.img 从 raw ext4 转为压缩 qcow2(3.3G→1.5G),Android 模拟器原生支持 qcow2,boot 验证通过(软件模式 ~530s,有 KVM 更快)。本地构建默认产出 slim 版:`docker build -f Dockerfile.e2e -t chw717/ai-agy:e2e-slim --provenance=false .`
 
 ### 准备离线产物(只在首次/升级时需要)
 

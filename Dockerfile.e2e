@@ -33,11 +33,11 @@ ENV PATH="${JAVA_HOME}/bin:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HO
 #    pre-depends 在 unpack 阶段对"未配置"包必失败 —— 容忍之:
 #    纯运行库 unpack 后文件即就位,ldconfig 刷新缓存;守护链留 unpacked 无害。
 #==============================================================================
-COPY downloads/debs-playwright/ /tmp/debs/
-RUN dpkg --unpack /tmp/debs/*.deb || true && \
+# buildkit bind-mount 传 deb(COPY 进层会永久占 210MB 死层)
+RUN --mount=type=bind,source=downloads/debs-playwright,target=/tmp/debs \
+    dpkg --unpack /tmp/debs/*.deb || true && \
     dpkg --configure -a || true && \
-    ldconfig && \
-    rm -rf /tmp/debs
+    ldconfig
 
 #==============================================================================
 # 2. JDK 17(Temurin,emulator 运行时依赖)

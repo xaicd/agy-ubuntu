@@ -310,6 +310,10 @@ else
     curldl "$EMU_URL" "$DL_DIR/emulator.zip" "${EMU_SIZE:-0}"
     rm -rf "$ANDROID_SDK_DIR/emulator"
     unzip -q "$DL_DIR/emulator.zip" -d "$ANDROID_SDK_DIR/"
+    # 删蓝牙/资源仿真(E2E 无用,省 ~50M)
+    rm -rf "$ANDROID_SDK_DIR/emulator/netsim" \
+           "$ANDROID_SDK_DIR/emulator/netsimd" \
+           "$ANDROID_SDK_DIR/emulator/resources"
     rm -f "$DL_DIR/emulator.zip"
     echo "    ✓ emulator $(du -sh "$ANDROID_SDK_DIR/emulator" | cut -f1)"
 fi
@@ -333,6 +337,33 @@ else
     mv "$ANDROID_SDK_DIR/system-images/_tmp/x86_64" "$SYSIMG_DIR"
     rm -rf "$ANDROID_SDK_DIR/system-images/_tmp"
     rm -f "$DL_DIR/sysimg.zip"
+    # system/vendor 镜像转压缩 qcow2(raw ext4 3.1G→1.4G,实测 emulator boot 兼容)
+    if command -v wsl >/dev/null 2>&1; then
+        cat > "$DL_DIR/.wsl-qcow2.sh" <<'QEOF'
+#!/usr/bin/env bash
+set -e
+which qemu-img >/dev/null 2>&1 || {
+  apt-get update >/dev/null 2>&1
+  apt-get install -y --no-install-recommends qemu-utils >/dev/null 2>&1
+}
+DIR="__SYSIMG_DIR__"
+for img in system.img vendor.img; do
+  [ -f "$DIR/$img" ] || continue
+  qemu-img info "$DIR/$img" | grep -q "file format: qcow2" && continue
+  echo "  qcow2: $img $(du -h "$DIR/$img" | cut -f1) → ..."
+  qemu-img convert -O qcow2 -c "$DIR/$img" "$DIR/$img.qcow2.tmp"
+  mv "$DIR/$img.qcow2.tmp" "$DIR/$img"
+  echo "  done: $img → $(du -h "$DIR/$img" | cut -f1)"
+done
+QEOF
+        wsl_qcow_script="$(echo "$DL_DIR/.wsl-qcow2.sh" | sed 's|^/\([a-zA-Z]\)|/mnt/\1|')"
+        wsl_sysimg_dir="$(echo "$SYSIMG_DIR" | sed 's|^/\([a-zA-Z]\)|/mnt/\1|')"
+        sed -i "s|__SYSIMG_DIR__|${wsl_sysimg_dir}|" "$DL_DIR/.wsl-qcow2.sh"
+        MSYS_NO_PATHCONV=1 wsl -d "$WSL_DISTRO" -u root -- bash "$wsl_qcow_script"
+        rm -f "$DL_DIR/.wsl-qcow2.sh"
+    else
+        echo "    ⚠ 无 WSL,跳过 qcow2 压缩(system.img 保持 raw,镜像会大 ~1.9G)" >&2
+    fi
     echo "    ✓ system-image $(du -sh "$SYSIMG_DIR" | cut -f1)"
 fi
 
