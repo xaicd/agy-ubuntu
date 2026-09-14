@@ -147,6 +147,8 @@ pw-init.sh                          # 首跑自动 npm install(@playwright/test)
 
 浏览器二进制(chromium 1148 / firefox 1466 / webkit 2104,对应 playwright 1.49.0)已预装在镜像 `/root/.cache/ms-playwright/`,无需 `playwright install`。
 
+> **webkit 说明**:WPE 后端在无显示环境会断言崩溃(WPEBackend-fdo 是 wayland-only),镜像已把 `pw_run.sh` 的 headless 分支改走 GTK 后端,并由 entrypoint 常驻 `Xvfb :99`(浏览器自动使用,无需手动配置)。
+
 ### agent-device(CLI + Node API 桥接 + 包装命令)
 
 ```bash
