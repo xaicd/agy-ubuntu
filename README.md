@@ -79,3 +79,115 @@ docker compose up -d
 
 - Docker Desktop(需 `/dev/net/tun` + `NET_ADMIN` capacity)
 - 若容器出网大文件传输异常,需将 daemon `mtu` 调低(本机为 1400,见 `daemon.json`)
+
+## E2E / 自动化测试镜像(`agy-e2e`)
+
+基础 `agy-box` 镜像**完全不变**,E2E 能力由独立镜像 `chw717/ai-agy:e2e` 提供,构建自 `Dockerfile.e2e`,由 `docker-compose.e2e.yml` 编排。两个 image 不互相影响:
+
+| 镜像 | 文件 | 适用场景 |
+|------|------|---------|
+| `chw717/ai-agy:latest` | `Dockerfile` | 只跑 `agy` / Node / pnpm(默认) |
+| `chw717/ai-agy:e2e` | `Dockerfile.e2e` | 跑 Playwright / agent-device / Android emulator |
+
+### 准备离线产物(只在首次/升级时需要)
+
+```bash
+# 默认下载全部(包括 E2E 产物,首跑 ~15-30 分钟)
+bash prepare-downloads.sh
+
+# 只下载基础镜像产物(更快)
+SKIP_E2E=1 bash prepare-downloads.sh
+
+# 调参
+JDK_VERSION=17.0.13 bash prepare-downloads.sh
+ANDROID_API=30 bash prepare-downloads.sh
+PLAYWRIGHT_VERSION=1.49.0 bash prepare-downloads.sh
+AGENT_DEVICE_VERSION=latest bash prepare-downloads.sh
+```
+
+### 构建并启动
+
+```bash
+# 基础镜像(零变化)
+docker compose up -d --build
+
+# E2E 镜像
+docker compose -f docker-compose.e2e.yml up -d --build
+docker exec -it agy-ubuntu-e2e bash
+
+# 或本地构建 + 日期标签(可选,bash build.sh 默认只构建基础镜像)
+E2E_BUILD=1 bash build.sh    # 同时构建 e2e 镜像,打 :e2e-<日期> 标签
+```
+
+### KVM / Android emulator
+
+```bash
+# 在容器里检查 KVM
+ls -la /dev/kvm
+# 有设备文件 → emulator 硬件加速(冷启动 1-3 分钟)
+# 无设备文件 → emulator 软件模式(冷启动 5-10 分钟,部分功能不稳)
+
+# 手动启停
+start-emulator.sh                  # 创建 AVD + 启动 + 等 sys.boot_completed
+adb-status.sh                      # 一键状态报告
+
+# 自动启动(在 .env 设 E2E_AUTOSTART_EMULATOR=1)
+```
+
+**Windows + WSL2 注意事项:**WSL2 默认不暴露 `/dev/kvm` 给嵌套容器;若 `ls -la /dev/kvm` 没东西,在 BIOS 开 nested virtualization 并重启 Docker Desktop。仍不可用时,emulator 会自动降级到 `-accel off -gpu swiftshader_indirect`。
+
+### Playwright 三引擎
+
+```bash
+pw-init.sh                          # 跑 ./workspace/e2e/smoke/playwright-smoke.spec.ts
+# 产物:/root/workspace/e2e/{reports,videos,traces,artifacts}
+```
+
+### agent-device(CLI + Node API 桥接 + 包装命令)
+
+```bash
+agy-e2e devices                     # 列出 adb 设备
+agy-e2e info                        # 当前设备信息
+agy-e2e tap 540 1200                # 模拟点击
+agy-e2e swipe 100 200 500 600 300   # 模拟滑动
+agy-e2e type "hello world"          # 模拟文本输入
+agy-e2e screenshot home             # 截图 → /root/workspace/e2e/screenshots/
+agy-e2e record start demo           # 开始录制
+agy-e2e record stop                 # 停止录制(产物落 ./workspace/e2e/recordings/)
+agy-e2e replay <path>          # 回放录制
+agy-e2e wait-boot                   # 等 sys.boot_completed=1
+
+# Node API
+node -e 'import("agy-e2e-bridge").then(async ({AgentDevice}) => {
+  const ad = new AgentDevice({ deviceId: "emulator-5554" });
+  await ad.shell("input keyevent KEYCODE_HOME");
+  console.log(await ad.info());
+})'
+```
+
+### 产物布局
+
+`/root/workspace/e2e/`(自动 bind 到宿主 `./workspace/e2e/`):
+
+```
+reports/
+  playwright-html/        # playwright HTML report(浏览器打开 index.html)
+  junit/results.xml       # junit xml
+videos/                   # *.webm
+traces/                   # trace.zip(用 https://trace.playwright.dev 看)
+recordings/               # agent-device 录制 + device-info.json
+screenshots/              # 通用截图
+artifacts/                # playwright test-results,其他附件
+smoke/                    # 冒烟脚本(源码)
+```
+
+### 镜像体积
+
+| 镜像 | 大小(估) |
+|------|----------|
+| `agy-box`(:latest) | ~800 MB |
+| `agy-e2e`(:e2e) | +1.5~2.5 GB(Playwright 0.5GB + Android SDK 1.5GB + agent-device 0.1GB + JDK 0.2GB) |
+
+### downloads/ 杂项
+
+`downloads/crane.exe` 与 `downloads/crane.tar.gz` 是早期实验遗留(不在 prepare-downloads 脚本里),无害,可手动删除。
