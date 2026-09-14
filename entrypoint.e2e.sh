@@ -160,8 +160,12 @@ EOF
 fi
 
 #==============================================================================
-# 6. E2E 扩展 —— adb server + 可选 emulator
+# 6. E2E 扩展 —— Xvfb(webkit headless 走 GTK 后端需要 X)+ adb server + 可选 emulator
 #==============================================================================
+echo "[entrypoint.e2e] Starting Xvfb :99 (webkit headless backend)..."
+Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/root/xvfb.log 2>&1 &
+export DISPLAY=:99
+
 echo "[entrypoint.e2e] Starting adb server..."
 adb start-server 2>/dev/null || echo "[entrypoint.e2e] adb start-server 失败(可能缺 SDK)"
 

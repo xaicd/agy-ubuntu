@@ -28,11 +28,15 @@ ENV ANDROID_API_LEVEL="${ANDROID_API_LEVEL:-30}"
 ENV PATH="${JAVA_HOME}/bin:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/emulator:${ANDROID_HOME}/system-tools:${PATH}"
 
 #==============================================================================
-# 1. Playwright 系统依赖(16 个 .deb,noble 上的 t64 变体)
+# 1. Playwright 三引擎系统依赖(官方 nativeDeps 全集,noble t64 变体)
+#    闭包含 systemd/dbus 守护链(gstreamer 拖入),但基础镜像无 systemd,
+#    pre-depends 在 unpack 阶段对"未配置"包必失败 —— 容忍之:
+#    纯运行库 unpack 后文件即就位,ldconfig 刷新缓存;守护链留 unpacked 无害。
 #==============================================================================
 COPY downloads/debs-playwright/ /tmp/debs/
-RUN dpkg --unpack /tmp/debs/*.deb && \
-    dpkg --configure -a && \
+RUN dpkg --unpack /tmp/debs/*.deb || true && \
+    dpkg --configure -a || true && \
+    ldconfig && \
     rm -rf /tmp/debs
 
 #==============================================================================
@@ -49,15 +53,26 @@ COPY downloads/android-sdk-licenses/ /opt/android/sdk/licenses/
 
 #==============================================================================
 # 4. Playwright 浏览器(chromium + firefox + webkit)
+#    webkit 补丁:WPE 后端在无显示环境断言崩溃(WPEBackend-fdo wayland-only),
+#    headless 改走 GTK 后端 + 常驻 Xvfb(entrypoint 启动),行为与官方镜像一致。
 #==============================================================================
 COPY downloads/pw-browsers/ /root/.cache/ms-playwright/
+RUN sed -i 's/MINIBROWSER_FOLDER="minibrowser-wpe"/MINIBROWSER_FOLDER="minibrowser-gtk"/' \
+        /root/.cache/ms-playwright/webkit-*/pw_run.sh && \
+    chmod -R +x /root/.cache/ms-playwright/
 
 #==============================================================================
-# 5. agent-device SDK(含 postinstall 产物)
+# 5. agent-device SDK(纯 tarball,零运行时依赖)
 #==============================================================================
 COPY downloads/agent-device.tgz /tmp/agent-device.tgz
 RUN npm i -g /tmp/agent-device.tgz --omit=dev && \
     rm -f /tmp/agent-device.tgz
+
+#==============================================================================
+# 5b. playwright npm 包 tarball(pw-init.sh 首跑离线装 node_modules 用;
+#     也可在线 npm install,这里避免容器首次跑测试时依赖外网)
+#==============================================================================
+COPY downloads/pw-tarballs/ /opt/pw-tarballs/
 
 #==============================================================================
 # 6. E2E 桥接层(Node 包,封装 agent-device CLI 调用)

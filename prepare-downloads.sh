@@ -480,6 +480,40 @@ else
     echo "    ✓ $(du -sh "$PW_DIR" | cut -f1)"
 fi
 
+# ---------- 9b. playwright npm 包 tarball(pw-init.sh 首跑离线装 node_modules) ----------
+# 容器内 npm install 需要拉 packument(大 JSON,易被断流),预置 3 个 tarball
+# (@playwright/test + playwright + playwright-core,纯 JS 小文件)让首跑零网络。
+echo "[9b/10] playwright npm tarballs(${PLAYWRIGHT_VERSION})"
+PW_TARBALLS="$DL_DIR/pw-tarballs"
+mkdir -p "$PW_TARBALLS"
+pw_npmtgz() {  # $1=包名(如 @playwright/test)  $2=本地文件名
+    local url="https://registry.npmmirror.com/$1/-/${1##*/}-${PLAYWRIGHT_VERSION}.tgz"
+    local out="$PW_TARBALLS/$2"
+    if [ -s "$out" ] && tar -tzf "$out" >/dev/null 2>&1; then
+        echo "    $2 已存在,跳过"
+        return 0
+    fi
+    # npmmirror 直链(小文件直连稳定);失败回退 npmjs
+    for i in $(seq 1 40); do
+        sz=$(stat -c%s "$out" 2>/dev/null || echo 0)
+        [ "$sz" -gt 5000 ] && tar -tzf "$out" >/dev/null 2>&1 && return 0
+        curl -sSL --tlsv1.2 --max-time 60 -C - "$url" -o "$out" 2>/dev/null || true
+    done
+    # 回退 npmjs 源
+    url="https://registry.npmjs.org/$1/-/${1##*/}-${PLAYWRIGHT_VERSION}.tgz"
+    for i in $(seq 1 40); do
+        sz=$(stat -c%s "$out" 2>/dev/null || echo 0)
+        [ "$sz" -gt 5000 ] && tar -tzf "$out" >/dev/null 2>&1 && return 0
+        curl -sSL --tlsv1.2 --max-time 60 -C - -x "${PROXY:-}" "$url" -o "$out" 2>/dev/null || true
+    done
+    echo "    ❌ $2 下载失败" >&2
+    return 1
+}
+pw_npmtgz "@playwright/test" "playwright-test-${PLAYWRIGHT_VERSION}.tgz" || exit 1
+pw_npmtgz "playwright"       "playwright-${PLAYWRIGHT_VERSION}.tgz"       || exit 1
+pw_npmtgz "playwright-core"  "playwright-core-${PLAYWRIGHT_VERSION}.tgz"  || exit 1
+echo "    ✓ $(ls "$PW_TARBALLS" | tr '\n' ' ')"
+
 # ---------- 10. Playwright 系统依赖 .deb ----------
 echo "[10/10] Playwright 系统依赖 .deb"
 PW_DEBS="$DL_DIR/debs-playwright"
@@ -494,30 +528,44 @@ else
     fi
     wsl_pw_debs="$(echo "$PW_DEBS" | sed 's|^/\([a-zA-Z]\)|/mnt/\1|')"
     echo "    通过 WSL($WSL_DISTRO)+ 阿里云镜像解析 Playwright 系统依赖..."
-    # noble 上包名是 t64 变体(libatk1.0-0t64 等);apt 对不存在的包名整体失败,
-    # 所以先试 t64 名单,失败再回退旧名。
-    wsl -d "$WSL_DISTRO" -u root -- bash -c "
+    # 包名清单来自 playwright-core 1.49 nativeDeps.js 的 ubuntu24.04-x64 段
+    # (chromium + firefox + webkit 三引擎全集 + 字体),noble 的 t64 变体。
+    cat > "$DL_DIR/.wsl-pw-debs.sh" <<WSLEOF
+#!/usr/bin/env bash
 set -e
 echo 'deb [trusted=yes] https://mirrors.aliyun.com/ubuntu noble main universe restricted multiverse' > /etc/apt/sources.list
 echo 'deb [trusted=yes] https://mirrors.aliyun.com/ubuntu noble-updates main universe' >> /etc/apt/sources.list
 echo 'deb [trusted=yes] https://mirrors.aliyun.com/ubuntu noble-security main universe' >> /etc/apt/sources.list
 apt-get update >/dev/null 2>&1
-apt-get install --download-only -y --no-install-recommends \
-    -o Dir::State::status=/dev/null -o Dir::State::extended_states=/dev/null \
-    libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 \
-    libdbus-1-3 libxkbcommon0 libatspi2.0-0t64 libx11-6 libxcomposite1 \
-    libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 \
-    libpango-1.0-0 libcairo2 libasound2t64 >/dev/null 2>&1 || \
-apt-get install --download-only -y --no-install-recommends \
-    -o Dir::State::status=/dev/null -o Dir::State::extended_states=/dev/null \
-    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-    libdbus-1-3 libxkbcommon0 libatspi2.0-0 libx11-6 libxcomposite1 \
-    libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 \
-    libpango-1.0-0 libcairo2 libasound2t64
-mkdir -p '$wsl_pw_debs'
-cp -f /var/cache/apt/archives/*.deb '$wsl_pw_debs/' 2>/dev/null || true
-echo '    WSL 内共下载:' \$(ls '$wsl_pw_debs'/*.deb 2>/dev/null | wc -l) '个 .deb'
-"
+apt-get clean
+DEST='$wsl_pw_debs'
+mkdir -p "\$DEST"
+rm -f "\$DEST"/*.deb
+apt-get install --download-only -y --no-install-recommends \\
+    -o Dir::State::status=/dev/null -o Dir::State::extended_states=/dev/null \\
+    libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 \\
+    libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 \\
+    libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 \\
+    libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 \\
+    libcairo-gobject2 libfontconfig1 libfreetype6 libgdk-pixbuf-2.0-0 \\
+    libgtk-3-0t64 libpangocairo-1.0-0 libx11-xcb1 libxcb-shm0 libxcursor1 \\
+    libxi6 libxrender1 \\
+    gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base \\
+    gstreamer1.0-plugins-good libicu74 libatomic1 libenchant-2-2 libepoxy0 \\
+    libevent-2.1-7t64 libflite1 libgles2 libgstreamer-gl1.0-0 \\
+    libgstreamer-plugins-bad1.0-0 libgstreamer-plugins-base1.0-0 \\
+    libgstreamer1.0-0 libharfbuzz-icu0 libharfbuzz0b libhyphen0 \\
+    libjpeg-turbo8 liblcms2-2 libmanette-0.2-0 libopus0 libpng16-16t64 \\
+    libsecret-1-0 libvpx9 libwayland-client0 libwayland-egl1 libwayland-server0 \\
+    libwebp7 libwebpdemux2 libwoff1 libxml2 libxslt1.1 libx264-164 libavif16 \\
+    fonts-liberation fonts-noto-color-emoji fonts-unifont >/dev/null
+cp -f /var/cache/apt/archives/*.deb "\$DEST/"
+echo "    DEBS: \$(ls "\$DEST"/*.deb | wc -l)"
+WSLEOF
+    wsl_script_wsl="$(echo "$DL_DIR/.wsl-pw-debs.sh" | sed 's|^/\([a-zA-Z]\)|/mnt/\1|')"
+    # wsl.exe 会篡改以 / 开头的独立参数;MSYS_NO_PATHCONV=1 关闭 Git Bash 的路径转换
+    MSYS_NO_PATHCONV=1 wsl -d "$WSL_DISTRO" -u root -- bash "$wsl_script_wsl"
+    rm -f "$DL_DIR/.wsl-pw-debs.sh"
     echo "    ✓ $(ls "$PW_DEBS"/*.deb 2>/dev/null | wc -l) 个 .deb"
 fi
 
