@@ -54,13 +54,11 @@ proxy-groups:
     interval: 300
     tolerance: 50
 rules:
-  # --- E2E DIRECT rules: RFC 1918 私网 + CGNAT + loopback + Android emulator NAT ---
-  - IP-CIDR,127.0.0.0/8,DIRECT       # loopback
-  - IP-CIDR,10.0.0.0/8,DIRECT        # RFC 1918 A 类私网
-  - IP-CIDR,10.0.2.0/24,DIRECT       # Android emulator NAT 段
-  - IP-CIDR,172.16.0.0/12,DIRECT     # RFC 1918 B 类私网 (172.16-31.x.x, 含 Docker bridge)
-  - IP-CIDR,192.168.0.0/16,DIRECT    # RFC 1918 C 类私网
-  - IP-CIDR,100.64.0.0/10,DIRECT     # CGNAT / Tailscale (100.64-127.x.x)
+  # --- E2E DIRECT rules (inserted by entrypoint.e2e.sh) ---
+  - IP-CIDR,127.0.0.0/8,DIRECT
+  - IP-CIDR,10.0.0.0/8,DIRECT
+  - IP-CIDR,10.0.2.0/24,DIRECT
+  - IP-CIDR,172.17.0.0/16,DIRECT
 EOF
     # 动态追加用户自定义 bypass CIDRs (E2E_BYPASS_CIDRS=192.168.0.0/16,100.64.0.0/10)
     if [ -n "${E2E_BYPASS_CIDRS:-}" ]; then
@@ -80,12 +78,9 @@ mixed-port: 7890
 mode: rule
 log-level: info
 rules:
-  - IP-CIDR,127.0.0.0/8,DIRECT       # loopback
-  - IP-CIDR,10.0.0.0/8,DIRECT        # RFC 1918 A 类私网
-  - IP-CIDR,10.0.2.0/24,DIRECT       # Android emulator NAT 段
-  - IP-CIDR,172.16.0.0/12,DIRECT     # RFC 1918 B 类私网 (172.16-31.x.x)
-  - IP-CIDR,192.168.0.0/16,DIRECT    # RFC 1918 C 类私网
-  - IP-CIDR,100.64.0.0/10,DIRECT     # CGNAT / Tailscale
+  - IP-CIDR,127.0.0.0/8,DIRECT
+  - IP-CIDR,10.0.0.0/8,DIRECT
+  - IP-CIDR,172.17.0.0/16,DIRECT
 EOF
     # 动态追加用户自定义 bypass CIDRs
     if [ -n "${E2E_BYPASS_CIDRS:-}" ]; then
