@@ -25,6 +25,9 @@ services:
       # E2E 开关(全部默认关闭,需手动开)
       E2E_AUTOSTART_EMULATOR: ${E2E_AUTOSTART_EMULATOR:-0}
       E2E_SKIP_EMULATOR: ${E2E_SKIP_EMULATOR:-0}
+      # 额外直连 CIDR 列表,逗号分隔,用于访问私网/内网服务(默认空,全走代理)
+      # 例: E2E_BYPASS_CIDRS=192.168.0.0/16,100.64.0.0/10
+      E2E_BYPASS_CIDRS: ${E2E_BYPASS_CIDRS:-}
       AVD_NAME: ${AVD_NAME:-test30}
       ANDROID_API_LEVEL: ${ANDROID_API_LEVEL:-30}
 
