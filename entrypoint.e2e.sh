@@ -5,6 +5,8 @@
 #   基于 entrypoint.sh 增加:
 #     - mihomo DIRECT 规则(127.0.0.0/8、10.0.2.0/24、172.17.0.0/16、10.0.0.0/8)
 #       防止 adb server / emulator 内部通信被代理劫持
+#     - E2E_BYPASS_CIDRS: 逗号分隔的额外 CIDR 直连列表,用于访问私网/内网部署服务
+#       例: E2E_BYPASS_CIDRS=192.168.0.0/16,100.64.0.0/10
 #     - 启动 adb server
 #     - 若 E2E_AUTOSTART_EMULATOR=1,异步 start-emulator.sh(不等 boot)
 #     - 加载 E2E 环境变量(ANDROID_HOME / PLAYWRIGHT_BROWSERS_PATH)
@@ -57,8 +59,18 @@ rules:
   - IP-CIDR,10.0.0.0/8,DIRECT
   - IP-CIDR,10.0.2.0/24,DIRECT
   - IP-CIDR,172.17.0.0/16,DIRECT
-  - MATCH,PROXY
 EOF
+    # 动态追加用户自定义 bypass CIDRs (E2E_BYPASS_CIDRS=192.168.0.0/16,100.64.0.0/10)
+    if [ -n "${E2E_BYPASS_CIDRS:-}" ]; then
+        echo "[entrypoint.e2e] E2E_BYPASS_CIDRS detected — adding custom DIRECT rules: ${E2E_BYPASS_CIDRS}"
+        IFS=',' read -ra _CIDRS <<< "${E2E_BYPASS_CIDRS}"
+        for _cidr in "${_CIDRS[@]}"; do
+            _cidr="${_cidr// /}"   # trim spaces
+            [ -z "$_cidr" ] && continue
+            echo "  - IP-CIDR,${_cidr},DIRECT" >> "${CONFIG}"
+        done
+    fi
+    echo "  - MATCH,PROXY" >> "${CONFIG}"
 else
     echo "[entrypoint.e2e] No CLASH_URL — writing minimal fallback config." >&2
     cat > "${CONFIG}" <<'EOF'
@@ -69,8 +81,18 @@ rules:
   - IP-CIDR,127.0.0.0/8,DIRECT
   - IP-CIDR,10.0.0.0/8,DIRECT
   - IP-CIDR,172.17.0.0/16,DIRECT
-  - MATCH,DIRECT
 EOF
+    # 动态追加用户自定义 bypass CIDRs
+    if [ -n "${E2E_BYPASS_CIDRS:-}" ]; then
+        echo "[entrypoint.e2e] E2E_BYPASS_CIDRS detected — adding custom DIRECT rules: ${E2E_BYPASS_CIDRS}"
+        IFS=',' read -ra _CIDRS <<< "${E2E_BYPASS_CIDRS}"
+        for _cidr in "${_CIDRS[@]}"; do
+            _cidr="${_cidr// /}"
+            [ -z "$_cidr" ] && continue
+            echo "  - IP-CIDR,${_cidr},DIRECT" >> "${CONFIG}"
+        done
+    fi
+    echo "  - MATCH,DIRECT" >> "${CONFIG}"
 fi
 
 #==============================================================================
@@ -196,6 +218,7 @@ cat <<BANNER
 
    * Mihomo TUN mode     : ACTIVE   (clash0,DIRECT rules for adb/emulator)
    * DNS hijack          : LOCKED   (127.0.0.0/8 → DIRECT)
+   * Bypass CIDRs        : ${E2E_BYPASS_CIDRS:-"(none) — set E2E_BYPASS_CIDRS to add private network ranges"}
    * Agent-device CLI    : $(command -v agent-device >/dev/null && echo "READY" || echo "MISSING")
    * agy-e2e bridge      : $(command -v agy-e2e >/dev/null && echo "READY" || echo "MISSING")
    * adb                 : $(command -v adb >/dev/null && echo "READY" || echo "MISSING")
