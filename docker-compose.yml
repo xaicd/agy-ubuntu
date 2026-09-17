@@ -31,6 +31,8 @@ services:
       - ./workspace:/root/workspace
       # 持久化 agy 登录状态(重建容器不丢登录)
       - ./agy-home:/root/.gemini
+      # 持久化全局 Claude 登录态、命令与 Skills(容器重建不丢)
+      - ./claude-home:/root/.claude
       # 共享宿主机 git 身份 + SSH 密钥(容器内可 commit/push)
       # 跨平台:Linux 原生有 HOME;Windows 需在 PowerShell 下执行(有 $HOME)
       - ${HOME}/.gitconfig:/root/.gitconfig-host:ro

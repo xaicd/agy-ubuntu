@@ -167,6 +167,27 @@ EOF
 fi
 
 #==============================================================================
+# 5.1 Claude / Antigravity 全局 Commands & Skills 联动与初始化
+#==============================================================================
+mkdir -p /root/.claude/commands /root/.claude/skills /root/.agents/skills
+
+for search_base in /root/workspace/agy-ubuntu /root/workspace/wenlv-next /root/workspace/palantir-agent-workflow-template; do
+    if [ -d "${search_base}/.claude/commands" ]; then
+        cp -n "${search_base}/.claude/commands/"*.md /root/.claude/commands/ 2>/dev/null || true
+    fi
+    if [ -d "${search_base}/.agents/skills" ]; then
+        for sdir in "${search_base}/.agents/skills/"*; do
+            if [ -d "$sdir" ]; then
+                sname="$(basename "$sdir")"
+                [ -e "/root/.claude/skills/$sname" ] || ln -sfn "$sdir" "/root/.claude/skills/$sname"
+                [ -e "/root/.agents/skills/$sname" ] || ln -sfn "$sdir" "/root/.agents/skills/$sname"
+            fi
+        done
+    fi
+done
+echo "[entrypoint.e2e] Global Claude commands & skills initialized."
+
+#==============================================================================
 # 6. E2E 扩展 —— Xvfb(webkit headless 走 GTK 后端需要 X)+ adb server + 可选 emulator
 #==============================================================================
 echo "[entrypoint.e2e] Starting Xvfb :99 (webkit headless backend)..."

@@ -171,6 +171,28 @@ EOF
 fi
 
 #------------------------------------------------------------------------------
+# 5.1 Claude / Antigravity 全局 Commands & Skills 联动与初始化
+#------------------------------------------------------------------------------
+mkdir -p /root/.claude/commands /root/.claude/skills /root/.agents/skills
+
+for search_base in /root/workspace/agy-ubuntu /root/workspace/wenlv-next /root/workspace/palantir-agent-workflow-template; do
+    if [ -d "${search_base}/.claude/commands" ]; then
+        cp -n "${search_base}/.claude/commands/"*.md /root/.claude/commands/ 2>/dev/null || true
+    fi
+    if [ -d "${search_base}/.agents/skills" ]; then
+        for sdir in "${search_base}/.agents/skills/"*; do
+            if [ -d "$sdir" ]; then
+                sname="$(basename "$sdir")"
+                [ -e "/root/.claude/skills/$sname" ] || ln -sfn "$sdir" "/root/.claude/skills/$sname"
+                [ -e "/root/.agents/skills/$sname" ] || ln -sfn "$sdir" "/root/.agents/skills/$sname"
+            fi
+        done
+    fi
+done
+echo "[entrypoint] Global Claude commands & skills initialized."
+
+
+#------------------------------------------------------------------------------
 # 6. Welcome banner + interactive shell
 #------------------------------------------------------------------------------
 cat <<'BANNER'
