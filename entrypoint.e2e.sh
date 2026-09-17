@@ -47,7 +47,8 @@ proxy-groups:
     type: url-test
     use:
       - sub
-    filter: "^【.*(美国|日本|新加坡|韩国|加拿大|英国|德国|法国|荷兰|澳大利亚|新西兰)"
+    filter: ".*(日本|美国|智利|新加坡|台湾).*"
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门).*"
     url: https://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
@@ -56,7 +57,10 @@ rules:
   - IP-CIDR,127.0.0.0/8,DIRECT
   - IP-CIDR,10.0.0.0/8,DIRECT
   - IP-CIDR,10.0.2.0/24,DIRECT
-  - IP-CIDR,172.17.0.0/16,DIRECT
+  - IP-CIDR,172.16.0.0/12,DIRECT
+  - IP-CIDR,192.168.0.0/16,DIRECT
+  - IP-CIDR,100.64.0.0/10,DIRECT
+  - IP-CIDR,192.144.0.0/16,DIRECT
   - MATCH,PROXY
 EOF
 else
@@ -68,7 +72,10 @@ log-level: info
 rules:
   - IP-CIDR,127.0.0.0/8,DIRECT
   - IP-CIDR,10.0.0.0/8,DIRECT
-  - IP-CIDR,172.17.0.0/16,DIRECT
+  - IP-CIDR,172.16.0.0/12,DIRECT
+  - IP-CIDR,192.168.0.0/16,DIRECT
+  - IP-CIDR,100.64.0.0/10,DIRECT
+  - IP-CIDR,192.144.0.0/16,DIRECT
   - MATCH,DIRECT
 EOF
 fi

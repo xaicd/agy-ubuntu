@@ -51,7 +51,8 @@ proxy-groups:
     type: url-test
     use:
       - sub
-    filter: "^【.*(美国|日本|新加坡|韩国|加拿大|英国|德国|法国|荷兰|澳大利亚|新西兰)"
+    filter: ".*(日本|美国|智利|新加坡|台湾).*"
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门).*"
     url: https://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
