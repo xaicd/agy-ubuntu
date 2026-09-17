@@ -40,7 +40,7 @@ services:
       - ./workspace:/root/workspace
       - ./agy-home:/root/.gemini
       # 持久化全局 Claude 登录态、命令与 Skills(容器重建不丢)
-      - ./claude-home:/root/.claude
+      - ./claude:/root/.claude
       # 跨平台:Linux 原生有 HOME;Windows 需在 PowerShell 下执行(有 $HOME)
       - ${HOME}/.gitconfig:/root/.gitconfig-host:ro
       - ${HOME}/.ssh:/root/.ssh-host:ro
