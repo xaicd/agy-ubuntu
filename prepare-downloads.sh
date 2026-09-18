@@ -600,6 +600,64 @@ WSLEOF
     echo "    ✓ $(ls "$PW_DEBS"/*.deb 2>/dev/null | wc -l) 个 .deb"
 fi
 
+# ---------- 11. Open-AutoGLM(智谱开源手机 GUI Agent 框架,纯 Python) ----------
+# 产物: downloads/open-autoglm/(源码 tarball,已剔除 .git) + downloads/pip-wheels/(依赖 wheels)
+# 镜像内安装: pip3 install --no-index --find-links=/tmp/wheels openai Pillow requests
+#             && pip3 install --no-index /opt/open-autoglm/open-autoglm.tar.gz
+# 模型端点不烧进镜像,运行时经 AUTOGLM_BASE_URL / AUTOGLM_API_KEY / AUTOGLM_MODEL 注入。
+echo "[11/11] Open-AutoGLM + pip wheels"
+AUTOGLM_DIR="$DL_DIR/open-autoglm"
+PW_WHEELS="$DL_DIR/pip-wheels"
+AUTOGLM_REF="${AUTOGLM_REF:-main}"   # 可 pin 到 commit/tag
+if [ -s "$AUTOGLM_DIR/open-autoglm.tar.gz" ] && tar -tzf "$AUTOGLM_DIR/open-autoglm.tar.gz" >/dev/null 2>&1; then
+    echo "    已存在,跳过 ($(du -h "$AUTOGLM_DIR/open-autoglm.tar.gz" | cut -f1))"
+else
+    echo "    拉取 zai-org/Open-AutoGLM(${AUTOGLM_REF})..."
+    rm -rf "$AUTOGLM_DIR" "$DL_DIR/.autoglm-tmp"
+    mkdir -p "$AUTOGLM_DIR" "$DL_DIR/.autoglm-tmp"
+    # 优先 codeload tarball(单文件、无 .git、体积最小);失败再退 git clone
+    if curldl "https://codeload.github.com/zai-org/Open-AutoGLM/tar.gz/refs/heads/${AUTOGLM_REF}" \
+              "$AUTOGLM_DIR/open-autoglm.tar.gz" 0; then
+        tar -xzf "$AUTOGLM_DIR/open-autoglm.tar.gz" -C "$DL_DIR/.autoglm-tmp"
+        # 重组为顶层目录 Open-AutoGLM/ 后重打包,便于 Dockerfile COPY 后路径稳定
+        src_dir="$(ls -d "$DL_DIR"/.autoglm-tmp/Open-AutoGLM-* 2>/dev/null | head -1)"
+        [ -n "$src_dir" ] || { echo "    ❌ tarball 解压结构异常" >&2; exit 1; }
+        mv "$src_dir" "$DL_DIR/.autoglm-tmp/Open-AutoGLM"
+        tar -czf "$AUTOGLM_DIR/open-autoglm.tar.gz" -C "$DL_DIR/.autoglm-tmp" Open-AutoGLM
+        rm -rf "$DL_DIR/.autoglm-tmp"
+    else
+        echo "    codeload 失败,退回 git clone..."
+        GIT_TERMINAL_PROMPT=0 git clone --depth 1 "https://github.com/zai-org/Open-AutoGLM.git" \
+            "$DL_DIR/.autoglm-tmp/Open-AutoGLM" || { echo "    ❌ Open-AutoGLM 拉取失败" >&2; exit 1; }
+        rm -rf "$DL_DIR/.autoglm-tmp/Open-AutoGLM/.git"
+        tar -czf "$AUTOGLM_DIR/open-autoglm.tar.gz" -C "$DL_DIR/.autoglm-tmp" Open-AutoGLM
+        rm -rf "$DL_DIR/.autoglm-tmp"
+    fi
+    echo "    ✓ $(du -h "$AUTOGLM_DIR/open-autoglm.tar.gz" | cut -f1)"
+fi
+# 依赖 wheels(openai/Pillow/requests 及其传递依赖,linux x86_64)
+if ls "$PW_WHEELS"/*.whl >/dev/null 2>&1; then
+    echo "    pip wheels 已存在,跳过 ($(ls "$PW_WHEELS"/*.whl | wc -l) 个)"
+else
+    mkdir -p "$PW_WHEELS"
+    if command -v pip3 >/dev/null 2>&1; then
+        pip3 download -d "$PW_WHEELS" \
+            --only-binary=:all: --platform manylinux2014_x86_64 --python-version 312 \
+            "openai>=2.9.0" "Pillow>=12.0.0" "requests>=2.31.0" \
+            || { echo "    ❌ pip wheels 下载失败" >&2; exit 1; }
+        echo "    ✓ $(ls "$PW_WHEELS"/*.whl | wc -l) 个 wheel"
+    elif command -v pip >/dev/null 2>&1; then
+        pip download -d "$PW_WHEELS" \
+            --only-binary=:all: --platform manylinux2014_x86_64 --python-version 312 \
+            "openai>=2.9.0" "Pillow>=12.0.0" "requests>=2.31.0" \
+            || { echo "    ❌ pip wheels 下载失败" >&2; exit 1; }
+        echo "    ✓ $(ls "$PW_WHEELS"/*.whl | wc -l) 个 wheel"
+    else
+        echo "    ⚠ 本机无 pip,请手动准备 downloads/pip-wheels/(openai/Pillow/requests 及依赖)" >&2
+        exit 1
+    fi
+fi
+
 echo ""
 echo "✅ 完成!downloads/ 已就绪,可运行:"
 echo "  docker compose up -d --build                         # 基础 agy-box"

@@ -82,6 +82,25 @@ RUN ln -sf /usr/local/lib/node_modules/agy-e2e-bridge/cli.js /usr/local/bin/agy-
     chmod +x /usr/local/lib/node_modules/agy-e2e-bridge/cli.js
 
 #==============================================================================
+# 6.5 Open-AutoGLM(智谱开源手机 GUI Agent: 截屏→VLM 决策→ADB 执行循环)
+#     - 纯 Python 框架,依赖 openai/Pillow/requests 离线 wheels
+#     - 模型端点运行时注入: AUTOGLM_BASE_URL / AUTOGLM_API_KEY / AUTOGLM_MODEL
+#     - 与 agy-e2e(确定性)互补: AutoGLM 负责自主探索式任务(黑盒 App 巡检)
+#==============================================================================
+COPY downloads/open-autoglm/ /opt/open-autoglm-src/
+COPY downloads/pip-wheels/ /tmp/pip-wheels/
+RUN python3 -m pip install --no-index --find-links=/tmp/pip-wheels \
+        openai Pillow requests \
+    && mkdir -p /opt/open-autoglm \
+    && tar -xzf /opt/open-autoglm-src/open-autoglm.tar.gz -C /opt/open-autoglm --strip-components=1 \
+    && cd /opt/open-autoglm && python3 -m pip install --no-index --no-deps -e . \
+    && rm -rf /tmp/pip-wheels /opt/open-autoglm-src
+ENV PYTHONPATH=/opt/open-autoglm:${PYTHONPATH}
+# Open-AutoGLM 模型端点(默认占位,运行时覆盖;示例指向智谱 GLM 视觉模型)
+ENV AUTOGLM_BASE_URL="https://open.bigmodel.cn/api/paas/v4" \
+    AUTOGLM_MODEL="glm-4.5v"
+
+#==============================================================================
 # 7. helper scripts
 #==============================================================================
 COPY scripts/start-emulator.sh /usr/local/bin/start-emulator.sh
