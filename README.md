@@ -55,7 +55,12 @@ PROXY= bash prepare-downloads.sh # 直连(不代理)
 
 ### 节点与地域
 
-Gemini / Google AI 对**香港、澳门、台湾、俄罗斯**等地区不提供支持,entrypoint 已用 `exclude-filter` 排除这些地区,url-test 自动在美/日/新/韩等支持地区选择最快节点。
+Gemini / Google AI 对**香港、澳门、俄罗斯**等地区不提供支持。代理组用 `select` 固定节点,`filter` 只放行 **美国 / 日本 / 智利 / 台湾**,`exclude-filter` 硬排除 **香港 / 澳门 / 新加坡**。
+
+> 注意:不能只看第三方 IP 库。该订阅的 `新加坡01/02/03`(出口 `152.175.66.x`)在 ip-api / ipinfo 上都显示 `SG`,但 **Google 判为香港**——`curl http://www.google.com` 会 302 到 `google.com.hk?pref=hkredirect`,Gemini 会报地区不支持。HTTP 状态码(200/204)看不出来,判定地区请看重定向:
+> ```bash
+> curl -s -o /dev/null -w '%{redirect_url}\n' http://www.google.com   # 出现 google.com.hk 即不合格
+> ```
 
 ## 版本标签与回滚
 

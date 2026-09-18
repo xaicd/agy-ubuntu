@@ -44,6 +44,8 @@ services:
       # 跨平台:Linux 原生有 HOME;Windows 需在 PowerShell 下执行(有 $HOME)
       - ${HOME}/.gitconfig:/root/.gitconfig-host:ro
       - ${HOME}/.ssh:/root/.ssh-host:ro
+      # entrypoint 由宿主机挂载:改脚本立即生效,免重建镜像(文件需有可执行位)
+      - ./entrypoint.e2e.sh:/usr/local/bin/entrypoint.sh:ro
 
     # --- 模拟器需要 privileged 启动 avd manager / qemu ---
     privileged: false  # 保持 false,避免过度授权;KVM + NET_ADMIN 已够用

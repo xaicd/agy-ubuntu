@@ -12,8 +12,10 @@ agy-home/
 
 # ===== 本地工具与登录态(敏感,持久化挂载) =====
 claude-home/
+claude/
 .claude/*
 !.claude/commands/
+.commandcode/
 
 # ===== 备份/杂项 =====
 *.tar

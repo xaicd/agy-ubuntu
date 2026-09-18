@@ -5,7 +5,7 @@
 # 核心原则：
 #   1. 纯 API 热重载，绝对不杀进程（禁止 pkill），防止 TUN 网卡崩溃断网；
 #   2. 自动识别 Docker 网关（宿主机 IP）与常用私网段（100.64.0.0/10、192.144.0.0/16等）；
-#   3. 锁定合规地区（日本、美国、智利、新加坡、台湾），硬排除香港/澳门；
+#   3. 锁定合规地区（日本、美国、智利、台湾），硬排除香港/澳门/新加坡；
 #   4. 持久保存在工作区脚本中，容器重启/重建零丢失。
 #==============================================================================
 
@@ -61,14 +61,15 @@ done
 echo "  -> 生效 DIRECT 网段: ${FINAL_CIDRS[*]}"
 
 # 2. 安全更新 config.yaml（过滤策略 + rules）
-echo "[2/3] ⚙️  更新过滤规则 (美/日/智/新/台，硬排除港澳)..."
+echo "[2/3] ⚙️  更新过滤规则 (美/日/智/台，硬排除港澳新)..."
 
-# 更新 filter 与 exclude-filter
-sed -i -E 's/filter: .*/filter: ".*(日本|美国|智利|新加坡|台湾).*"/g' "$MIHOMO_CONFIG"
+# 更新 filter 与 exclude-filter（锚定行首，避免误伤 exclude-filter 行）
+EXCLUDE_FILTER='.*(香港|HK|Hong Kong|澳门|新加坡|SG).*'
+sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|美国|智利|台湾).*"/' "$MIHOMO_CONFIG"
 if grep -q "exclude-filter:" "$MIHOMO_CONFIG"; then
-    sed -i -E 's/exclude-filter: .*/exclude-filter: ".*(香港|HK|Hong Kong|澳门).*"/g' "$MIHOMO_CONFIG"
+    sed -i -E "s/^([[:space:]]*)exclude-filter: .*/\1exclude-filter: \"$EXCLUDE_FILTER\"/" "$MIHOMO_CONFIG"
 else
-    sed -i '/filter:/a \    exclude-filter: ".*(香港|HK|Hong Kong|澳门).*"' "$MIHOMO_CONFIG"
+    sed -i -E "s/^([[:space:]]*)filter: (.*)/\1filter: \2\n\1exclude-filter: \"$EXCLUDE_FILTER\"/" "$MIHOMO_CONFIG"
 fi
 
 # 确保 rules 段包含所有 FINAL_CIDRS
@@ -97,8 +98,8 @@ fi
 
 # 同步给 entrypoint 脚本（容器如果被 docker restart 重启，也能保留）
 if [ -f "$ENTRYPOINT_SCRIPT" ] && [ -w "$ENTRYPOINT_SCRIPT" ]; then
-    sed -i -E 's/filter: .*/filter: ".*(日本|美国|智利|新加坡|台湾).*"/g' "$ENTRYPOINT_SCRIPT"
-    sed -i -E 's/exclude-filter: .*/exclude-filter: ".*(香港|HK|Hong Kong|澳门).*"/g' "$ENTRYPOINT_SCRIPT"
+    sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|美国|智利|台湾).*"/' "$ENTRYPOINT_SCRIPT"
+    sed -i -E "s/^([[:space:]]*)exclude-filter: .*/\1exclude-filter: \"$EXCLUDE_FILTER\"/" "$ENTRYPOINT_SCRIPT"
 fi
 
 echo "======================================================================"

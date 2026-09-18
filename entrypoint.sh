@@ -48,14 +48,12 @@ proxy-providers:
       interval: 300
 proxy-groups:
   - name: PROXY
-    type: url-test
+    type: select
     use:
       - sub
-    filter: ".*(日本|美国|智利|新加坡|台湾).*"
-    exclude-filter: ".*(香港|HK|Hong Kong|澳门).*"
-    url: https://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
+    filter: ".*(日本|美国|智利|台湾).*"
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
+    default-selected: "【3X】日本01[核心加速]"
 rules:
   - MATCH,PROXY
 EOF

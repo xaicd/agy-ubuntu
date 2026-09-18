@@ -1,6 +1,6 @@
 ---
 name: proxy-network-workflow
-description: E2E 容器沙箱代理网络治理与宿主机私网直连工作流。涵盖 Mihomo TUN 模式无缝热重载、宿主机与私网网段自适应探测放行（Bypass）、海外合规节点（美/日/智/新/台）锁定与禁限区（港澳）硬排除规范。用于排查“网络断流”、“Google/Gemini 锁区”、“宿主机/开发机连不上”、“代理刷新后出不去”等网络故障。
+description: E2E 容器沙箱代理网络治理与宿主机私网直连工作流。涵盖 Mihomo TUN 模式无缝热重载、宿主机与私网网段自适应探测放行（Bypass）、海外合规节点（美/日/智/台）锁定与禁限区（港澳新）硬排除规范。用于排查“网络断流”、“Google/Gemini 锁区”、“宿主机/开发机连不上”、“代理刷新后出不去”等网络故障。
 ---
 
 # E2E 容器沙箱代理网络治理与宿主机私网直连工作流
@@ -27,8 +27,8 @@ description: E2E 容器沙箱代理网络治理与宿主机私网直连工作流
         ├──────────────────────────┬───────────────────────┤
         ▼ (命中 DIRECT 规则)        ▼ (未命中 DIRECT，走 MATCH)
   [宿主机 / 开发机 / 内网]          [海外代理提供商 (sub.yaml)]
-  - 宿主机网关 (172.21.0.1)        - 允许: 美 / 日 / 智 / 新 / 台
-  - 开发机 (100.101.22.109)        - 严禁: 香港 / 澳门 (AI 锁区)
+  - 宿主机网关 (172.21.0.1)        - 允许: 美 / 日 / 智 / 台
+  - 开发机 (100.101.22.109)        - 严禁: 香港 / 澳门 / 新加坡 (AI 锁区)
   - 测试机 (192.144.253.205)               │
         │                                  ▼
         ▼ (宿主机物理网络直通)       [Google / Gemini / Claude API]
@@ -40,11 +40,19 @@ description: E2E 容器沙箱代理网络治理与宿主机私网直连工作流
 - **强制红线**：**严禁通过杀进程方式刷新代理配置！** 必须且只能调用 Mihomo RESTful API（`PUT 127.0.0.1:9090/configs?force=true`）实现**零丢包热重载**。
 
 ### 痛点 2：自动切到香港节点导致 AI 锁区
-- **原理**：香港节点距离大陆近，延迟极低（15~30ms），若未在代理组（`url-test`）中严厉排除，测速机制将 100% 自动切向香港。
+- **原理**：香港节点距离大陆近，延迟极低（15~30ms），若在代理组（`url-test`）中不严厉排除，测速机制将 100% 自动切向香港；且 `url-test` 会持续漂节点，无法固定。
 - **后果**：Google Gemini、Google AI Studio、Claude 等服务在香港严格锁区，报错 `User location is not supported`。
 - **合规名单**：
-  - **允许列表**：`.*(日本|美国|智利|新加坡|台湾).*`（均官方支持 Gemini/Claude，台湾兼具 40ms 超低延迟）
-  - **排除列表**：`.*(香港|HK|Hong Kong|澳门).*`
+  - **允许列表**：`.*(日本|美国|智利|台湾).*`（均官方支持 Gemini/Claude，台湾兼具 40ms 超低延迟）
+  - **排除列表**：`.*(香港|HK|Hong Kong|澳门|新加坡|SG).*`
+- **陷阱：按节点名排除不够，必须验 Google 的地理判定**。实测该机场的 `新加坡01/02/03`（`[边缘加速]` 与 `[核心加速]` 是同一批出口 IP，`152.175.66.x`）在 ip-api / ipinfo 上都显示 `SG`，但 **Google 判为香港**，`curl http://www.google.com` 会 302 跳到 `google.com.hk?pref=hkredirect` → Gemini 报地区不支持。**状态码（200/204）看不出来，必须看重定向**：
+  ```bash
+  curl -s -o /dev/null -w '%{redirect_url}\n' http://www.google.com   # 出现 google.com.hk 即不合格
+  ```
+- **代理组用 `type: select` + `default-selected` 固定节点**（不要用 `url-test`），从根上杜绝"自动刷新漂到锁区节点"。切换节点走 API：
+  ```bash
+  curl -s -X PUT http://127.0.0.1:9090/proxies/PROXY -d '{"name":"【3X】日本01[核心加速]"}'
+  ```
 
 ### 痛点 3：无法访问宿主机与开发测试机
 - **原理**：容器内访问宿主机服务（如 Next.js 开发服务、商户后台）若未配置 DIRECT 放行，请求会被送往海外代理节点，海外节点无法寻址内网 IP，导致 `Empty reply from server` 或超时。
@@ -80,6 +88,6 @@ bash scripts/refresh-proxy.sh [可选额外CIDR]
 ### 3. 执行结果健康验收标准（四项全通）
 执行刷新后，控制台必须完成以下四步校验闭环：
 - [x] **Mihomo API 热重载**：返回 `HTTP 204` 或 `HTTP 200`，TUN 接口 `clash0` 无中断；
-- [x] **出海活跃节点**：`ACTIVE_NODE` 属于台湾、日本、美国、智利或新加坡，**绝无香港**；
+- [x] **出海活跃节点**：`ACTIVE_NODE` 属于台湾、日本、美国或智利，**绝无香港/澳门/新加坡**；且 `curl -s -o /dev/null -w '%{redirect_url}' http://www.google.com` **不得出现 `google.com.hk`**；
 - [x] **外网连通性**：`curl https://www.google.com/generate_204` 返回 `HTTP 204`；
 - [x] **宿主机连通性**：`curl http://<宿主机网关>/` 或 `http://100.101.22.109/` 返回 `HTTP 200`。
