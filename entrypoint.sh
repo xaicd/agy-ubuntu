@@ -48,12 +48,43 @@ proxy-providers:
       interval: 300
 proxy-groups:
   - name: PROXY
-    type: select
+    type: url-test
     use:
       - sub
     filter: ".*(日本|美国|智利|台湾).*"
     exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
-    default-selected: "【3X】日本01[核心加速]"
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 200
+rules:
+  - MATCH,PROXY
+EOF
+elif [ -f "${MIHOMO_DIR}/proxies-static.yaml" ]; then
+    # macOS/本地模式:宿主机已导出的节点文件(如从千陌/FlClash 提取),免订阅
+    echo "[entrypoint] proxies-static.yaml detected — using static node list..."
+    cat > "${CONFIG}" <<EOF
+mixed-port: 7890
+mode: rule
+log-level: info
+external-controller: 127.0.0.1:9090
+proxy-providers:
+  static:
+    type: file
+    path: ${MIHOMO_DIR}/proxies-static.yaml
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 300
+proxy-groups:
+  - name: PROXY
+    type: url-test
+    use:
+      - static
+    filter: ".*(日本|美国|智利|台湾).*"
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 200
 rules:
   - MATCH,PROXY
 EOF
