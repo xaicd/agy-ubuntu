@@ -54,7 +54,7 @@ proxy-groups:
     type: url-test
     use:
       - sub
-    filter: ".*(日本|美国|智利|台湾).*"
+    filter: ".*(日本|美国|美國|智利|台湾|台灣|Japan|USA|United States|Chile|Taiwan|🇺🇸|🇯🇵|🇨🇱|🇹🇼).*"
     exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
     url: https://www.gstatic.com/generate_204
     interval: 300
@@ -84,7 +84,7 @@ proxy-groups:
     type: url-test
     use:
       - static
-    filter: ".*(日本|美国|智利|台湾).*"
+    filter: ".*(日本|美国|美國|智利|台湾|台灣|Japan|USA|United States|Chile|Taiwan|🇺🇸|🇯🇵|🇨🇱|🇹🇼).*"
     exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
     url: https://www.gstatic.com/generate_204
     interval: 300

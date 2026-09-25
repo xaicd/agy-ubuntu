@@ -65,7 +65,7 @@ echo "[2/3] ⚙️  更新过滤规则 (美/日/智/台，硬排除港澳新)...
 
 # 更新 filter 与 exclude-filter（锚定行首，避免误伤 exclude-filter 行）
 EXCLUDE_FILTER='.*(香港|HK|Hong Kong|澳门|新加坡|SG).*'
-sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|美国|智利|台湾).*"/' "$MIHOMO_CONFIG"
+sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|美国|美國|智利|台湾|台灣|Japan|USA|United States|Chile|Taiwan|🇺🇸|🇯🇵|🇨🇱|🇹🇼).*"/' "$MIHOMO_CONFIG"
 if grep -q "exclude-filter:" "$MIHOMO_CONFIG"; then
     sed -i -E "s/^([[:space:]]*)exclude-filter: .*/\1exclude-filter: \"$EXCLUDE_FILTER\"/" "$MIHOMO_CONFIG"
 else
@@ -98,7 +98,7 @@ fi
 
 # 同步给 entrypoint 脚本（容器如果被 docker restart 重启，也能保留）
 if [ -f "$ENTRYPOINT_SCRIPT" ] && [ -w "$ENTRYPOINT_SCRIPT" ]; then
-    sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|美国|智利|台湾).*"/' "$ENTRYPOINT_SCRIPT"
+    sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|美国|美國|智利|台湾|台灣|Japan|USA|United States|Chile|Taiwan|🇺🇸|🇯🇵|🇨🇱|🇹🇼).*"/' "$ENTRYPOINT_SCRIPT"
     sed -i -E "s/^([[:space:]]*)exclude-filter: .*/\1exclude-filter: \"$EXCLUDE_FILTER\"/" "$ENTRYPOINT_SCRIPT"
 fi
 
