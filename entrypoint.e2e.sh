@@ -31,6 +31,7 @@ if [ -n "${CLASH_URL:-}" ]; then
 mixed-port: 7890
 mode: rule
 log-level: info
+ipv6: false
 external-controller: 127.0.0.1:9090
 proxy-providers:
   sub:
@@ -44,12 +45,53 @@ proxy-providers:
       interval: 300
 proxy-groups:
   - name: PROXY
-    type: select
+    type: url-test
     use:
       - sub
     filter: ".*(日本|美国|智利|台湾).*"
     exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
-    default-selected: "【3X】日本01[核心加速]"
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 200
+rules:
+  # --- E2E DIRECT rules (inserted by entrypoint.e2e.sh) ---
+  - IP-CIDR,127.0.0.0/8,DIRECT
+  - IP-CIDR,10.0.0.0/8,DIRECT
+  - IP-CIDR,10.0.2.0/24,DIRECT
+  - IP-CIDR,172.16.0.0/12,DIRECT
+  - IP-CIDR,192.168.0.0/16,DIRECT
+  - IP-CIDR,100.64.0.0/10,DIRECT
+  - IP-CIDR,192.144.0.0/16,DIRECT
+  - MATCH,PROXY
+EOF
+elif [ -f "${MIHOMO_DIR}/proxies-static.yaml" ]; then
+    # macOS/本地模式:宿主机导出的节点文件(同 entrypoint.sh;e2e 此前缺这个分支,
+    # CLASH_URL 为空时直接掉进 MATCH,DIRECT 兜底 → 外网全挂)
+    echo "[entrypoint.e2e] proxies-static.yaml detected — using static node list..."
+    cat > "${CONFIG}" <<EOF
+mixed-port: 7890
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9090
+proxy-providers:
+  static:
+    type: file
+    path: ${MIHOMO_DIR}/proxies-static.yaml
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 300
+proxy-groups:
+  - name: PROXY
+    type: url-test
+    use:
+      - static
+    filter: ".*(日本|美国|智利|台湾).*"
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 200
 rules:
   # --- E2E DIRECT rules (inserted by entrypoint.e2e.sh) ---
   - IP-CIDR,127.0.0.0/8,DIRECT
@@ -67,6 +109,7 @@ else
 mixed-port: 7890
 mode: rule
 log-level: info
+ipv6: false
 rules:
   - IP-CIDR,127.0.0.0/8,DIRECT
   - IP-CIDR,10.0.0.0/8,DIRECT

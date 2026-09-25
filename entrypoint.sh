@@ -35,6 +35,9 @@ if [ -n "${CLASH_URL:-}" ]; then
 mixed-port: 7890
 mode: rule
 log-level: info
+# 容器无 IPv6 路由:不关会去拨节点域名的 AAAA(CloudFront 2600::),
+# 每次连接先在 v6 黑洞上烧掉超时预算 → url-test "all proxies timeout"
+ipv6: false
 external-controller: 127.0.0.1:9090
 proxy-providers:
   sub:
@@ -66,6 +69,7 @@ elif [ -f "${MIHOMO_DIR}/proxies-static.yaml" ]; then
 mixed-port: 7890
 mode: rule
 log-level: info
+ipv6: false
 external-controller: 127.0.0.1:9090
 proxy-providers:
   static:
@@ -94,6 +98,7 @@ else
 mixed-port: 7890
 mode: rule
 log-level: info
+ipv6: false
 EOF
 fi
 
