@@ -49,7 +49,7 @@ proxy-groups:
       - sub
     filter: ".*(日本|美国|智利|台湾).*"
     exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
-    default-selected: "【3X】日本01[核心加速]"
+    default-selected: "【10X】台湾01[专线加速]"
 rules:
   # --- E2E DIRECT rules (inserted by entrypoint.e2e.sh) ---
   - IP-CIDR,127.0.0.0/8,DIRECT
