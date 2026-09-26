@@ -64,7 +64,8 @@ echo "  -> 生效 DIRECT 网段: ${FINAL_CIDRS[*]}"
 echo "[2/3] ⚙️  更新过滤规则 (美/日/智/台，硬排除港澳新)..."
 
 # 更新 filter 与 exclude-filter（锚定行首，避免误伤 exclude-filter 行）
-EXCLUDE_FILTER='.*(香港|HK|Hong Kong|澳门|新加坡|SG).*'
+# 【1X】/边缘加速(CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
+EXCLUDE_FILTER='.*(香港|HK|Hong Kong|澳门|新加坡|SG|【1X】|边缘加速).*'
 sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|美国|美國|智利|台湾|台灣|Japan|USA|United States|Chile|Taiwan|🇺🇸|🇯🇵|🇨🇱|🇹🇼).*"/' "$MIHOMO_CONFIG"
 if grep -q "exclude-filter:" "$MIHOMO_CONFIG"; then
     sed -i -E "s/^([[:space:]]*)exclude-filter: .*/\1exclude-filter: \"$EXCLUDE_FILTER\"/" "$MIHOMO_CONFIG"

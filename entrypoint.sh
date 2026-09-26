@@ -50,15 +50,19 @@ proxy-providers:
       url: https://www.gstatic.com/generate_204
       interval: 300
 proxy-groups:
+  # fallback 按序故障转移,不用 url-test:延迟轮盘会选中出口被 Google 判为
+  # 不支持地区的节点 → Gemini 报 User location is not supported。
+  # 健康检查用 google.com 期望 200:被判香港的出口会 302 → 检查失败,自动跳过
   - name: PROXY
-    type: url-test
+    type: fallback
     use:
       - sub
     filter: ".*(日本|美国|美國|智利|台湾|台灣|Japan|USA|United States|Chile|Taiwan|🇺🇸|🇯🇵|🇨🇱|🇹🇼).*"
-    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
-    url: https://www.gstatic.com/generate_204
+    # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,直接排除
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|【1X】|边缘加速).*"
+    url: http://www.google.com
+    expected-status: "200"
     interval: 300
-    tolerance: 200
 rules:
   - MATCH,PROXY
 EOF
@@ -80,15 +84,19 @@ proxy-providers:
       url: https://www.gstatic.com/generate_204
       interval: 300
 proxy-groups:
+  # fallback 按序故障转移,不用 url-test:延迟轮盘会选中出口被 Google 判为
+  # 不支持地区的节点 → Gemini 报 User location is not supported。
+  # 健康检查用 google.com 期望 200:被判香港的出口会 302 → 检查失败,自动跳过
   - name: PROXY
-    type: url-test
+    type: fallback
     use:
       - static
     filter: ".*(日本|美国|美國|智利|台湾|台灣|Japan|USA|United States|Chile|Taiwan|🇺🇸|🇯🇵|🇨🇱|🇹🇼).*"
-    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
-    url: https://www.gstatic.com/generate_204
+    # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,直接排除
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|【1X】|边缘加速).*"
+    url: http://www.google.com
+    expected-status: "200"
     interval: 300
-    tolerance: 200
 rules:
   - MATCH,PROXY
 EOF
