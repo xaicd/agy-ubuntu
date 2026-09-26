@@ -64,9 +64,11 @@ echo "  -> 生效 DIRECT 网段: ${FINAL_CIDRS[*]}"
 echo "[2/3] ⚙️  更新过滤规则 (美/日/智/台，硬排除港澳新)..."
 
 # 更新 filter 与 exclude-filter（锚定行首，避免误伤 exclude-filter 行）
-# 【1X】/边缘加速(CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
-EXCLUDE_FILTER='.*(香港|HK|Hong Kong|澳门|新加坡|SG|【1X】|边缘加速).*'
-sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|美国|美國|智利|台湾|台灣|Japan|USA|United States|Chile|Taiwan|🇺🇸|🇯🇵|🇨🇱|🇹🇼).*"/' "$MIHOMO_CONFIG"
+# 该订阅全部"美国"档出口被 Google 判为不支持地区(2026-09-26 实测),
+# 【1X】/边缘加速(CloudFront 前置)底座不稳曾整晚断流,两者一并排除
+EXCLUDE_FILTER='.*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|【1X】|边缘加速).*'
+FILTER='.*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*'
+sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*"/' "$MIHOMO_CONFIG"
 if grep -q "exclude-filter:" "$MIHOMO_CONFIG"; then
     sed -i -E "s/^([[:space:]]*)exclude-filter: .*/\1exclude-filter: \"$EXCLUDE_FILTER\"/" "$MIHOMO_CONFIG"
 else
@@ -99,7 +101,7 @@ fi
 
 # 同步给 entrypoint 脚本（容器如果被 docker restart 重启，也能保留）
 if [ -f "$ENTRYPOINT_SCRIPT" ] && [ -w "$ENTRYPOINT_SCRIPT" ]; then
-    sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|美国|美國|智利|台湾|台灣|Japan|USA|United States|Chile|Taiwan|🇺🇸|🇯🇵|🇨🇱|🇹🇼).*"/' "$ENTRYPOINT_SCRIPT"
+    sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*"/' "$ENTRYPOINT_SCRIPT"
     sed -i -E "s/^([[:space:]]*)exclude-filter: .*/\1exclude-filter: \"$EXCLUDE_FILTER\"/" "$ENTRYPOINT_SCRIPT"
 fi
 

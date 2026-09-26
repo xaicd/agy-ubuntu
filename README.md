@@ -55,12 +55,14 @@ PROXY= bash prepare-downloads.sh # 直连(不代理)
 
 ### 节点与地域
 
-Gemini / Google AI 对**香港、澳门、俄罗斯**等地区不提供支持。代理组用 `select` 固定节点,`filter` 只放行 **美国 / 日本 / 智利 / 台湾**,`exclude-filter` 硬排除 **香港 / 澳门 / 新加坡**。
+Gemini / Google AI 对**香港、澳门、俄罗斯**等地区不提供支持。代理组为 **fallback 按序故障转移**(不用 url-test——延迟轮盘会随机选中不合规出口),`filter` 只放行 **日本 / 智利 / 台湾**,`exclude-filter` 硬排除 **香港 / 澳门 / 新加坡 / 美国档 / 1X 边缘加速**。健康检查用 `http://www.google.com` 且期望 200:被判香港的出口会 302,检查失败自动跳过。
 
-> 注意:不能只看第三方 IP 库。该订阅的 `新加坡01/02/03`(出口 `152.175.66.x`)在 ip-api / ipinfo 上都显示 `SG`,但 **Google 判为香港**——`curl http://www.google.com` 会 302 到 `google.com.hk?pref=hkredirect`,Gemini 会报地区不支持。HTTP 状态码(200/204)看不出来,判定地区请看重定向:
+> 注意一:不能只看第三方 IP 库。该订阅的 `新加坡01/02/03`(出口 `152.175.66.x`)在 ip-api / ipinfo 上都显示 `SG`,但 **Google 判为香港**——`curl http://www.google.com` 会 302 到 `google.com.hk?pref=hkredirect`,Gemini 会报地区不支持。HTTP 状态码(200/204)看不出来,判定地区请看重定向:
 > ```bash
 > curl -s -o /dev/null -w '%{redirect_url}\n' http://www.google.com   # 出现 google.com.hk 即不合格
 > ```
+>
+> 注意二(2026-09-26 实测):该订阅**全部"美国"档**(1X/3X/10X,出口 OVH `40.160.x.x` 等)被 Google 判为不支持地区——ip-api 显示 US Oregon、google.com 也不重定向,但 `daily-cloudcode-pa.googleapis.com` 的 generateContent 一律报 `FAILED_PRECONDITION: User location is not supported`。同日逐节点实测 **日/台/智全通**,故美国档整体排除。终极判定探针就是 agy 本身:`agy --print "只回复:ok"`。
 
 ## 版本标签与回滚
 
