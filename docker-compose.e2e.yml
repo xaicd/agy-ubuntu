@@ -15,7 +15,9 @@ services:
       args:
         AVD_NAME: ${AVD_NAME:-test30}
         ANDROID_API_LEVEL: ${ANDROID_API_LEVEL:-30}
-    image: chw717/ai-agy:e2e
+    # Mac/arm64 本地构建的镜像无 :e2e 多架构 manifest,用 E2E_IMAGE 覆盖
+    # (mac: E2E_IMAGE=chw717/ai-agy:e2e-arm64,见 docker-compose.e2e.mac.yml)
+    image: ${E2E_IMAGE:-chw717/ai-agy:e2e}
     container_name: agy-ubuntu-e2e
     restart: always
 
@@ -41,6 +43,8 @@ services:
       - ./agy-home:/root/.gemini
       # 持久化全局 Claude 登录态、命令与 Skills(容器重建不丢)
       - ./claude:/root/.claude
+      # 静态节点文件(同 docker-compose.mac.yml;无 CLASH_URL 时 e2e 也有节点可用)
+      - ./mihomo-conf/proxies-static.yaml:/root/.config/mihomo/proxies-static.yaml:ro
       # 跨平台:Linux 原生有 HOME;Windows 需在 PowerShell 下执行(有 $HOME)
       - ${HOME}/.gitconfig:/root/.gitconfig-host:ro
       - ${HOME}/.ssh:/root/.ssh-host:ro

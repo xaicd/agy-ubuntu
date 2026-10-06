@@ -35,6 +35,9 @@ if [ -n "${CLASH_URL:-}" ]; then
 mixed-port: 7890
 mode: rule
 log-level: info
+# 容器无 IPv6 路由:不关会去拨节点域名的 AAAA(CloudFront 2600::),
+# 每次连接先在 v6 黑洞上烧掉超时预算 → url-test "all proxies timeout"
+ipv6: false
 external-controller: 127.0.0.1:9090
 proxy-providers:
   sub:
@@ -47,13 +50,57 @@ proxy-providers:
       url: https://www.gstatic.com/generate_204
       interval: 300
 proxy-groups:
+  # fallback 按序故障转移,不用 url-test:延迟轮盘会选中出口被 Google 判为
+  # 不支持地区的节点 → Gemini 报 User location is not supported。
+  # 健康检查用 google.com 期望 200:被判香港的出口会 302 → 检查失败,自动跳过
   - name: PROXY
-    type: select
+    type: fallback
     use:
       - sub
-    filter: ".*(日本|美国|智利|台湾).*"
-    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
-    default-selected: "【3X】日本01[核心加速]"
+    # 该订阅全部"美国"档出口被 Google 判为不支持地区(Gemini 报 User location
+    # is not supported),日/台/智实测全通(2026-09-26 逐节点验证)
+    filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*"
+    # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|【1X】|边缘加速).*"
+    url: http://www.google.com
+    expected-status: "200"
+    interval: 300
+rules:
+  - MATCH,PROXY
+EOF
+elif [ -f "${MIHOMO_DIR}/proxies-static.yaml" ]; then
+    # macOS/本地模式:宿主机已导出的节点文件(如从千陌/FlClash 提取),免订阅
+    echo "[entrypoint] proxies-static.yaml detected — using static node list..."
+    cat > "${CONFIG}" <<EOF
+mixed-port: 7890
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9090
+proxy-providers:
+  static:
+    type: file
+    path: ${MIHOMO_DIR}/proxies-static.yaml
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 300
+proxy-groups:
+  # fallback 按序故障转移,不用 url-test:延迟轮盘会选中出口被 Google 判为
+  # 不支持地区的节点 → Gemini 报 User location is not supported。
+  # 健康检查用 google.com 期望 200:被判香港的出口会 302 → 检查失败,自动跳过
+  - name: PROXY
+    type: fallback
+    use:
+      - static
+    # 该订阅全部"美国"档出口被 Google 判为不支持地区(Gemini 报 User location
+    # is not supported),日/台/智实测全通(2026-09-26 逐节点验证)
+    filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*"
+    # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|【1X】|边缘加速).*"
+    url: http://www.google.com
+    expected-status: "200"
+    interval: 300
 rules:
   - MATCH,PROXY
 EOF
@@ -63,6 +110,7 @@ else
 mixed-port: 7890
 mode: rule
 log-level: info
+ipv6: false
 EOF
 fi
 

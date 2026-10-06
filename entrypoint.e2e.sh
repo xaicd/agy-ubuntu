@@ -31,6 +31,7 @@ if [ -n "${CLASH_URL:-}" ]; then
 mixed-port: 7890
 mode: rule
 log-level: info
+ipv6: false
 external-controller: 127.0.0.1:9090
 proxy-providers:
   sub:
@@ -43,13 +44,66 @@ proxy-providers:
       url: https://www.gstatic.com/generate_204
       interval: 300
 proxy-groups:
+  # fallback 按序故障转移,不用 url-test:延迟轮盘会选中出口被 Google 判为
+  # 不支持地区的节点 → Gemini 报 User location is not supported。
+  # 健康检查用 google.com 期望 200:被判香港的出口会 302 → 检查失败,自动跳过
   - name: PROXY
-    type: select
+    type: fallback
     use:
       - sub
-    filter: ".*(日本|美国|智利|台湾).*"
-    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG).*"
-    default-selected: "【10X】台湾01[专线加速]"
+    # 该订阅全部"美国"档出口被 Google 判为不支持地区(Gemini 报 User location
+    # is not supported),日/台/智实测全通(2026-09-26 逐节点验证)
+    filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*"
+    # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|【1X】|边缘加速).*"
+    url: http://www.google.com
+    expected-status: "200"
+    interval: 300
+rules:
+  # --- E2E DIRECT rules (inserted by entrypoint.e2e.sh) ---
+  - IP-CIDR,127.0.0.0/8,DIRECT
+  - IP-CIDR,10.0.0.0/8,DIRECT
+  - IP-CIDR,10.0.2.0/24,DIRECT
+  - IP-CIDR,172.16.0.0/12,DIRECT
+  - IP-CIDR,192.168.0.0/16,DIRECT
+  - IP-CIDR,100.64.0.0/10,DIRECT
+  - IP-CIDR,192.144.0.0/16,DIRECT
+  - MATCH,PROXY
+EOF
+elif [ -f "${MIHOMO_DIR}/proxies-static.yaml" ]; then
+    # macOS/本地模式:宿主机导出的节点文件(同 entrypoint.sh;e2e 此前缺这个分支,
+    # CLASH_URL 为空时直接掉进 MATCH,DIRECT 兜底 → 外网全挂)
+    echo "[entrypoint.e2e] proxies-static.yaml detected — using static node list..."
+    cat > "${CONFIG}" <<EOF
+mixed-port: 7890
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9090
+proxy-providers:
+  static:
+    type: file
+    path: ${MIHOMO_DIR}/proxies-static.yaml
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 300
+proxy-groups:
+  # fallback 按序故障转移,不用 url-test:延迟轮盘会选中出口被 Google 判为
+  # 不支持地区的节点 → Gemini 报 User location is not supported。
+  # 健康检查用 google.com 期望 200:被判香港的出口会 302 → 检查失败,自动跳过
+  - name: PROXY
+    type: fallback
+    use:
+      - static
+    # 该订阅全部"美国"档出口被 Google 判为不支持地区(Gemini 报 User location
+    # is not supported),日/台/智实测全通(2026-09-26 逐节点验证)
+    filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*"
+    # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|【1X】|边缘加速).*"
+    url: http://www.google.com
+    expected-status: "200"
+    interval: 300
 rules:
   # --- E2E DIRECT rules (inserted by entrypoint.e2e.sh) ---
   - IP-CIDR,127.0.0.0/8,DIRECT
@@ -67,6 +121,7 @@ else
 mixed-port: 7890
 mode: rule
 log-level: info
+ipv6: false
 rules:
   - IP-CIDR,127.0.0.0/8,DIRECT
   - IP-CIDR,10.0.0.0/8,DIRECT
