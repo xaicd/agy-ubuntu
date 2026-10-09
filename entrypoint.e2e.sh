@@ -51,8 +51,9 @@ proxy-groups:
     type: fallback
     use:
       - sub
-    # 该订阅全部"美国"档出口被 Google 判为不支持地区(Gemini 报 User location
-    # is not supported),日/台/智实测全通(2026-09-26 逐节点验证)
+    # 优先日/台/智核心加速档(2026-09-26 逐节点验证全通);美国档同为核心加速,
+    # 2026-10-09 重新纳入候选池:Google 200 健康检查会自动淘汰被判不支持地区的
+    # 出口(失败的 5 分钟内被 fallback 跳过),不再一刀切排除地理
     filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|美国|USA|United States|🇯🇵|🇨🇱|🇹🇼|🇺🇸).*"
     # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
     exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|【1X】|边缘加速).*"
@@ -96,8 +97,9 @@ proxy-groups:
     type: fallback
     use:
       - static
-    # 该订阅全部"美国"档出口被 Google 判为不支持地区(Gemini 报 User location
-    # is not supported),日/台/智实测全通(2026-09-26 逐节点验证)
+    # 优先日/台/智核心加速档(2026-09-26 逐节点验证全通);美国档同为核心加速,
+    # 2026-10-09 重新纳入候选池:Google 200 健康检查会自动淘汰被判不支持地区的
+    # 出口(失败的 5 分钟内被 fallback 跳过),不再一刀切排除地理
     filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|美国|USA|United States|🇯🇵|🇨🇱|🇹🇼|🇺🇸).*"
     # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
     exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|【1X】|边缘加速).*"
