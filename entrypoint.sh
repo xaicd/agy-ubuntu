@@ -29,8 +29,20 @@ TUN_MTU="${TUN_MTU:-${ETH0_MTU:-1500}}"
 #------------------------------------------------------------------------------
 mkdir -p "${MIHOMO_DIR}/providers"
 
+# 先置空:静态分支的 heredoc 同样展开 ${SUB_DIRECT_RULES},不初始化会触发 set -u
+SUB_DIRECT_RULES=""
+
 if [ -n "${CLASH_URL:-}" ]; then
     echo "[entrypoint] CLASH_URL detected — configuring proxy-provider subscription..."
+    # 订阅服务器必须 DIRECT:provider 首拉发生在 TUN auto-route 接管之后,
+    # 若命中 MATCH,PROXY 会形成「没节点 → 拉不到订阅 → 没节点」bootstrap 死循环
+    # (日志特征:dial PROXY (match Match/) mihomo --> <订阅服务器> error)
+    SUB_HOST="$(printf '%s' "${CLASH_URL}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#[:/?#].*$##')"
+    if printf '%s' "${SUB_HOST}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        SUB_DIRECT_RULES="  - IP-CIDR,${SUB_HOST}/32,DIRECT"
+    elif [ -n "${SUB_HOST}" ]; then
+        SUB_DIRECT_RULES="  - DOMAIN,${SUB_HOST},DIRECT"
+    fi
     cat > "${CONFIG}" <<EOF
 mixed-port: 7890
 mode: rule
@@ -67,6 +79,9 @@ proxy-groups:
     expected-status: "200"
     interval: 300
 rules:
+${SUB_DIRECT_RULES}
+  # Tailscale/CGNAT 段(100.64.0.0/10)直连:经宿主 tailscale0 转发,不进 TUN 代理
+  - IP-CIDR,100.64.0.0/10,DIRECT
   - MATCH,PROXY
 EOF
 elif [ -f "${MIHOMO_DIR}/proxies-static.yaml" ]; then
@@ -104,6 +119,9 @@ proxy-groups:
     expected-status: "200"
     interval: 300
 rules:
+${SUB_DIRECT_RULES}
+  # Tailscale/CGNAT 段(100.64.0.0/10)直连:经宿主 tailscale0 转发,不进 TUN 代理
+  - IP-CIDR,100.64.0.0/10,DIRECT
   - MATCH,PROXY
 EOF
 else

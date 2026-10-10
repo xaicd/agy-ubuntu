@@ -25,8 +25,20 @@ TUN_MTU="${TUN_MTU:-${ETH0_MTU:-1500}}"
 #==============================================================================
 mkdir -p "${MIHOMO_DIR}/providers"
 
+# 先置空:静态分支的 heredoc 同样展开 ${SUB_DIRECT_RULES},不初始化会触发 set -u
+SUB_DIRECT_RULES=""
+
 if [ -n "${CLASH_URL:-}" ]; then
     echo "[entrypoint.e2e] CLASH_URL detected — configuring proxy-provider subscription..."
+    # 订阅服务器必须 DIRECT:provider 首拉发生在 TUN auto-route 接管之后,
+    # 若命中 MATCH,PROXY 会形成「没节点 → 拉不到订阅 → 没节点」bootstrap 死循环
+    # (日志特征:dial PROXY (match Match/) mihomo --> <订阅服务器> error)
+    SUB_HOST="$(printf '%s' "${CLASH_URL}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#[:/?#].*$##')"
+    if printf '%s' "${SUB_HOST}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        SUB_DIRECT_RULES="  - IP-CIDR,${SUB_HOST}/32,DIRECT"
+    elif [ -n "${SUB_HOST}" ]; then
+        SUB_DIRECT_RULES="  - DOMAIN,${SUB_HOST},DIRECT"
+    fi
     cat > "${CONFIG}" <<EOF
 mixed-port: 7890
 mode: rule
@@ -62,6 +74,7 @@ proxy-groups:
     interval: 300
 rules:
   # --- E2E DIRECT rules (inserted by entrypoint.e2e.sh) ---
+${SUB_DIRECT_RULES}
   - IP-CIDR,127.0.0.0/8,DIRECT
   - IP-CIDR,10.0.0.0/8,DIRECT
   - IP-CIDR,10.0.2.0/24,DIRECT
@@ -108,6 +121,7 @@ proxy-groups:
     interval: 300
 rules:
   # --- E2E DIRECT rules (inserted by entrypoint.e2e.sh) ---
+${SUB_DIRECT_RULES}
   - IP-CIDR,127.0.0.0/8,DIRECT
   - IP-CIDR,10.0.0.0/8,DIRECT
   - IP-CIDR,10.0.2.0/24,DIRECT
