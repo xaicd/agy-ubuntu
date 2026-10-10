@@ -43,6 +43,25 @@ if [ -n "${CLASH_URL:-}" ]; then
     elif [ -n "${SUB_HOST}" ]; then
         SUB_DIRECT_RULES="  - DOMAIN,${SUB_HOST},DIRECT"
     fi
+
+    # 本地兜底节点(可选):宿主机导出的 proxies-static.yaml。订阅入口域名被停权/
+    # 轮换时,订阅里所有节点都拨不通,只有它还能救命 —— 并入 PROXY-RESCUE。
+    LOCAL_PROVIDER_BLOCK=""
+    LOCAL_USE=""
+    if [ -f "${MIHOMO_DIR}/proxies-static.yaml" ]; then
+        LOCAL_PROVIDER_BLOCK="  local:
+    type: file
+    path: ${MIHOMO_DIR}/proxies-static.yaml
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 300
+"
+        LOCAL_USE='
+      - local'
+        echo "[entrypoint] 检测到本地兜底节点 proxies-static.yaml,并入 PROXY-RESCUE。"
+    fi
+
     cat > "${CONFIG}" <<EOF
 mixed-port: 7890
 mode: rule
@@ -61,7 +80,7 @@ proxy-providers:
       enable: true
       url: https://www.gstatic.com/generate_204
       interval: 300
-proxy-groups:
+${LOCAL_PROVIDER_BLOCK}proxy-groups:
   # 结构:PROXY(统一出口) → [PROXY-GEO(合规主组) → PROXY-RESCUE(降级组)]
   #   正常走 GEO;GEO 内节点全部不可用(入口域名失效/健康检查全挂)时,
   #   outer fallback 自动降级到 RESCUE,尽量保住"有网可用"。
@@ -72,7 +91,7 @@ proxy-groups:
   - name: PROXY-GEO
     type: fallback
     use:
-      - sub
+      - sub${LOCAL_USE}
     # 优先日/台/智核心加速档(2026-09-26 逐节点验证全通);美国档同为核心加速,
     # 2026-10-09 重新纳入候选池:Google 200 健康检查会自动淘汰被判不支持地区的
     # 出口(失败的 5 分钟内被 fallback 跳过),不再一刀切排除地理
@@ -87,7 +106,7 @@ proxy-groups:
   - name: PROXY-RESCUE
     type: fallback
     use:
-      - sub
+      - sub${LOCAL_USE}
     url: http://www.google.com
     expected-status: "200"
     interval: 300
@@ -219,24 +238,24 @@ EOF
 #    下对任何域名都会返回 198.18.x 假 IP,拿不到 NXDOMAIN 真相。
 #------------------------------------------------------------------------------
 check_entry_domains() {
-    local src="" f d status ok=0 dead=0 dead_list="" ip_re='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+    local srcs="" files="" f d status ok=0 dead=0 dead_list="" ip_re='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
 
     for f in "${MIHOMO_DIR}/providers/sub.yaml" "${MIHOMO_DIR}/proxies-static.yaml"; do
-        if [ -s "$f" ]; then src="$f"; break; fi
+        if [ -f "$f" ] && [ -s "$f" ]; then srcs="${srcs} $f"; files="${files} $(basename "$f")"; fi
     done
-    if [ -z "$src" ]; then
+    if [ -z "$srcs" ]; then
         echo "[entry-domain] 未找到节点文件(provider/static),跳过入口域名自检。"
         return 0
     fi
 
     local domains
-    domains="$(grep -oE '(^|[^A-Za-z0-9_])server: *"?[^",}[:space:]]+' "$src" 2>/dev/null | sed -E 's/.*server: *"?//' | sort -u || true)"
+    domains="$(grep -hoE '(^|[^A-Za-z0-9_])server: *"?[^",}[:space:]]+' $srcs 2>/dev/null | sed -E 's/.*server: *"?//' | sort -u || true)"
     if [ -z "$domains" ]; then
         echo "[entry-domain] 节点文件无 server 字段,跳过自检。"
         return 0
     fi
 
-    echo "[entry-domain] 自检节点入口域名解析(经 mihomo 127.0.0.1:9090)..."
+    echo "[entry-domain] 自检节点入口域名解析(来源:${files# };经 mihomo 127.0.0.1:9090)..."
     for d in $domains; do
         if [[ "$d" =~ $ip_re ]]; then
             echo "  - ${d}  (裸 IP,跳过)"

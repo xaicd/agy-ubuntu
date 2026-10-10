@@ -20,19 +20,19 @@ MIHOMO_DIR="/root/.config/mihomo"
 MIHOMO_API="http://127.0.0.1:9090"
 
 run_check() {
-    local src="" f d status ok=0 dead=0 dead_list="" ip_re='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+    local srcs="" files="" f d status ok=0 dead=0 dead_list="" ip_re='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
 
     for f in "${MIHOMO_DIR}/providers/sub.yaml" "${MIHOMO_DIR}/proxies-static.yaml"; do
-        if [ -s "$f" ]; then src="$f"; break; fi
+        if [ -f "$f" ] && [ -s "$f" ]; then srcs="${srcs} $f"; files="${files} $(basename "$f")"; fi
     done
-    if [ -z "$src" ]; then
+    if [ -z "$srcs" ]; then
         echo "❌ 未找到节点文件 (${MIHOMO_DIR}/{providers/sub.yaml,proxies-static.yaml}) —— mihomo 未启动或未拉到订阅?" >&2
         return 3
     fi
-    echo "📄 节点文件: ${src}"
+    echo "📄 节点文件:${files}"
 
     local domains
-    domains="$(grep -oE '(^|[^A-Za-z0-9_])server: *"?[^",}[:space:]]+' "$src" 2>/dev/null | sed -E 's/.*server: *"?//' | sort -u || true)"
+    domains="$(grep -hoE '(^|[^A-Za-z0-9_])server: *"?[^",}[:space:]]+' $srcs 2>/dev/null | sed -E 's/.*server: *"?//' | sort -u || true)"
     if [ -z "$domains" ]; then
         echo "❌ 节点文件无 server 字段。" >&2
         return 3
@@ -57,7 +57,8 @@ run_check() {
     local now g r
     now="$(curl -s --max-time 4 "${MIHOMO_API}/proxies/PROXY" 2>/dev/null | sed -n 's/.*"now":"\([^"]*\)".*/\1/p')"
     echo "🌐 当前 PROXY 组: ${now:-<未知>}"
-    g="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://www.google.com/generate_204 2>/dev/null || echo 000)"
+    g="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 https://www.google.com/generate_204 2>/dev/null || true)"
+    [ -z "$g" ] && g=000
     r="$(curl -s -o /dev/null -w '%{redirect_url}' --max-time 8 http://www.google.com 2>/dev/null || true)"
     echo "🌐 Google generate_204: HTTP ${g}   (redirect=${r:-<none>})"
 

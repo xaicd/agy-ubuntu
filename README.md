@@ -75,6 +75,24 @@ entrypoint 启动后额外做两件事,专治「容器明明起来了、`curl` �
   退出码:`0` 正常 / `2` 入口域名全挂 / `3` 节点文件缺失。
 - **合规降级兜底**:代理组为 `PROXY → [PROXY-GEO → PROXY-RESCUE]`。正常走 GEO(日/智/台/美,以 entrypoint 的 `filter` 为准);仅当 GEO 内节点全部不可用(入口域名失效或健康检查全挂)时,外层 fallback 才自动降级到 RESCUE —— RESCUE 收进订阅全部节点,靠 `google.com` 期望 200 的健康检查自动淘汰被 Google 锁区的出口,尽量保住「有网可用」(可能落到被 Google 判为不支持地区的出口,属降级可用)。
 
+### 订阅入口域名失效时的本地兜底
+
+机场会轮换入口域名。**2026-10-10 实测**:该订阅的入口域名 `qianmo.org` 被注册商置于 `clientHold`(`.org` 注册局 RDAP 可查,全局 NXDOMAIN),而面板仍对所有客户端下发该域名 —— 于是**订阅里全部节点都拨不通**,容器侧只表现为 `curl: Empty reply from server`。同一订阅在宿主机还能用,只是因为宿主机客户端缓存的是旧快照(入口域名不同,如 `node.yukoupaper.com`、`*.qianmoip.win` 仍可解析)。
+
+兜底办法:把宿主机客户端里**当前仍可解析**的节点导出为 `mihomo-conf/proxies-static.yaml`(该目录已被 `.gitignore` 忽略,不会泄露凭据):
+
+```bash
+SRC=~/clashctl/resources/runtime.yaml        # 换成你的 clash/clashctl 配置
+{ echo "proxies:"
+  grep 'server: node.yukoupaper.com'        "$SRC" | sed -E 's/【1x】//; s/\[边缘加速\]/[CF]/'
+  grep -E 'server: [a-z0-9]+\.qianmoip\.win' "$SRC" | sed -E 's/【1x】//; s/\[边缘加速\]/[IP]/'
+} > mihomo-conf/proxies-static.yaml
+```
+
+entrypoint 启动时若检测到该文件(`-f`),会把它作为额外的 `local` provider 并入 `PROXY-GEO` 与 `PROXY-RESCUE`;文件缺失则静默跳过(`docker-compose.yml` 已挂载该路径)。机场恢复入口域名后删除该文件即可回到纯订阅模式。
+
+> 命名注意:不同入口(`node.yukoupaper.com` 与 `tw01.qianmoip.win` 等)可能有同名节点,重命名时务必加后缀(如 `[CF]`/`[IP]`)区分,否则会被 mihomo 去重、只剩其一。
+
 ## 版本标签与回滚
 
 `latest` 标签每次构建都会被覆盖,无法回滚。为此提供 `build.sh`:本地构建时自动额外打一个**日期标签** `chw717/ai-agy:<YYYYMMDD>`,历史版本得以保留:

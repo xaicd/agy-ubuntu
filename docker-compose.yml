@@ -39,6 +39,9 @@ services:
       - ${HOME}/.ssh:/root/.ssh-host:ro
       # entrypoint 由宿主机挂载:改脚本立即生效,免重建镜像(文件需有可执行位)
       - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      # 本地兜底节点(从宿主机千陌/clashctl 导出的可用入口;订阅入口域名失效时兜底。
+      # 文件不存在时 Docker 会建目录,entrypoint 用 -f 判空,不会误用。见 README)
+      - ./mihomo-conf/proxies-static.yaml:/root/.config/mihomo/proxies-static.yaml:ro
 
     # --- Interactive session support (docker attach / exec) ---
     stdin_open: true
