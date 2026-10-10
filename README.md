@@ -64,6 +64,17 @@ Gemini / Google AI 对**香港、澳门、俄罗斯**等地区不提供支持。
 >
 > 注意二(2026-09-26 实测):该订阅**全部"美国"档**(1X/3X/10X,出口 OVH `40.160.x.x` 等)被 Google 判为不支持地区——ip-api 显示 US Oregon、google.com 也不重定向,但 `daily-cloudcode-pa.googleapis.com` 的 generateContent 一律报 `FAILED_PRECONDITION: User location is not supported`。同日逐节点实测 **日/台/智全通**,故美国档整体排除。终极判定探针就是 agy 本身:`agy --print "只回复:ok"`。
 
+### 启动自检与降级兜底
+
+entrypoint 启动后额外做两件事,专治「容器明明起来了、`curl` 却只回 `Empty reply from server`」这类隐性断网:
+
+- **入口域名存活自检**:抽取订阅内所有节点的 `server` 域名,经 mihomo `/dns/query` 做**真实**解析(系统 `getent` 在 fake-ip 模式下对任何域名都返回 `198.18.x` 假 IP,看不出问题)。若全部 NXDOMAIN(机场域名被注册商 `clientHold`/停权,或已轮换入口域名),会打印 ❌ 致命告警并给出处置建议,而不是静默失败。可随时手动体检:
+  ```bash
+  bash scripts/check-proxy-health.sh            # 宿主机:自动 docker exec 转发
+  ```
+  退出码:`0` 正常 / `2` 入口域名全挂 / `3` 节点文件缺失。
+- **合规降级兜底**:代理组为 `PROXY → [PROXY-GEO → PROXY-RESCUE]`。正常走 GEO(日/智/台/美,以 entrypoint 的 `filter` 为准);仅当 GEO 内节点全部不可用(入口域名失效或健康检查全挂)时,外层 fallback 才自动降级到 RESCUE —— RESCUE 收进订阅全部节点,靠 `google.com` 期望 200 的健康检查自动淘汰被 Google 锁区的出口,尽量保住「有网可用」(可能落到被 Google 判为不支持地区的出口,属降级可用)。
+
 ## 版本标签与回滚
 
 `latest` 标签每次构建都会被覆盖,无法回滚。为此提供 `build.sh`:本地构建时自动额外打一个**日期标签** `chw717/ai-agy:<YYYYMMDD>`,历史版本得以保留:

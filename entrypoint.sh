@@ -62,10 +62,14 @@ proxy-providers:
       url: https://www.gstatic.com/generate_204
       interval: 300
 proxy-groups:
-  # fallback 按序故障转移,不用 url-test:延迟轮盘会选中出口被 Google 判为
-  # 不支持地区的节点 → Gemini 报 User location is not supported。
+  # 结构:PROXY(统一出口) → [PROXY-GEO(合规主组) → PROXY-RESCUE(降级组)]
+  #   正常走 GEO;GEO 内节点全部不可用(入口域名失效/健康检查全挂)时,
+  #   outer fallback 自动降级到 RESCUE,尽量保住"有网可用"。
+  #
+  # 主组 fallback 按序故障转移,不用 url-test:延迟轮盘会选中出口被 Google
+  # 判为不支持地区的节点 → Gemini 报 User location is not supported。
   # 健康检查用 google.com 期望 200:被判香港的出口会 302 → 检查失败,自动跳过
-  - name: PROXY
+  - name: PROXY-GEO
     type: fallback
     use:
       - sub
@@ -75,6 +79,24 @@ proxy-groups:
     filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|美国|USA|United States|🇯🇵|🇨🇱|🇹🇼|🇺🇸).*"
     # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
     exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|【1X】|边缘加速).*"
+    url: http://www.google.com
+    expected-status: "200"
+    interval: 300
+  # 降级组:兜底用,不设 filter —— 收进订阅全部节点,靠 google 200 健康检查
+  # 自动跳过(被判香港的出口会 302 被淘汰);仅当 GEO 全挂时才会被启用
+  - name: PROXY-RESCUE
+    type: fallback
+    use:
+      - sub
+    url: http://www.google.com
+    expected-status: "200"
+    interval: 300
+  # 统一出口:先合规 GEO,GEO 全挂自动降级 RESCUE
+  - name: PROXY
+    type: fallback
+    proxies:
+      - PROXY-GEO
+      - PROXY-RESCUE
     url: http://www.google.com
     expected-status: "200"
     interval: 300
@@ -102,10 +124,14 @@ proxy-providers:
       url: https://www.gstatic.com/generate_204
       interval: 300
 proxy-groups:
-  # fallback 按序故障转移,不用 url-test:延迟轮盘会选中出口被 Google 判为
-  # 不支持地区的节点 → Gemini 报 User location is not supported。
+  # 结构:PROXY(统一出口) → [PROXY-GEO(合规主组) → PROXY-RESCUE(降级组)]
+  #   正常走 GEO;GEO 内节点全部不可用(入口域名失效/健康检查全挂)时,
+  #   outer fallback 自动降级到 RESCUE,尽量保住"有网可用"。
+  #
+  # 主组 fallback 按序故障转移,不用 url-test:延迟轮盘会选中出口被 Google
+  # 判为不支持地区的节点 → Gemini 报 User location is not supported。
   # 健康检查用 google.com 期望 200:被判香港的出口会 302 → 检查失败,自动跳过
-  - name: PROXY
+  - name: PROXY-GEO
     type: fallback
     use:
       - static
@@ -115,6 +141,24 @@ proxy-groups:
     filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|美国|USA|United States|🇯🇵|🇨🇱|🇹🇼|🇺🇸).*"
     # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
     exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|【1X】|边缘加速).*"
+    url: http://www.google.com
+    expected-status: "200"
+    interval: 300
+  # 降级组:兜底用,不设 filter —— 收进订阅全部节点,靠 google 200 健康检查
+  # 自动跳过(被判香港的出口会 302 被淘汰);仅当 GEO 全挂时才会被启用
+  - name: PROXY-RESCUE
+    type: fallback
+    use:
+      - static
+    url: http://www.google.com
+    expected-status: "200"
+    interval: 300
+  # 统一出口:先合规 GEO,GEO 全挂自动降级 RESCUE
+  - name: PROXY
+    type: fallback
+    proxies:
+      - PROXY-GEO
+      - PROXY-RESCUE
     url: http://www.google.com
     expected-status: "200"
     interval: 300
@@ -167,6 +211,67 @@ dns:
 EOF
 
 #------------------------------------------------------------------------------
+# 3. 入口域名存活自检函数
+#    背景:机场轮换/停权入口域名后,订阅里所有节点的 server 域名都会 NXDOMAIN,
+#    mihomo 只会在日志刷 "dns resolve failed" —— 容器侧看到的仅是 curl
+#    "Empty reply from server",极易被误判成沙箱故障。启动时主动体检并告警。
+#    注意:必须走 mihomo 的 /dns/query(真实解析);系统 getent 在 fake-ip 模式
+#    下对任何域名都会返回 198.18.x 假 IP,拿不到 NXDOMAIN 真相。
+#------------------------------------------------------------------------------
+check_entry_domains() {
+    local src="" f d status ok=0 dead=0 dead_list="" ip_re='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+
+    for f in "${MIHOMO_DIR}/providers/sub.yaml" "${MIHOMO_DIR}/proxies-static.yaml"; do
+        if [ -s "$f" ]; then src="$f"; break; fi
+    done
+    if [ -z "$src" ]; then
+        echo "[entry-domain] 未找到节点文件(provider/static),跳过入口域名自检。"
+        return 0
+    fi
+
+    local domains
+    domains="$(grep -oE '(^|[^A-Za-z0-9_])server: *"?[^",}[:space:]]+' "$src" 2>/dev/null | sed -E 's/.*server: *"?//' | sort -u || true)"
+    if [ -z "$domains" ]; then
+        echo "[entry-domain] 节点文件无 server 字段,跳过自检。"
+        return 0
+    fi
+
+    echo "[entry-domain] 自检节点入口域名解析(经 mihomo 127.0.0.1:9090)..."
+    for d in $domains; do
+        if [[ "$d" =~ $ip_re ]]; then
+            echo "  - ${d}  (裸 IP,跳过)"
+            continue
+        fi
+        status="$(curl -s --max-time 6 "http://127.0.0.1:9090/dns/query?name=${d}&type=A" 2>/dev/null \
+                  | sed -n 's/.*"Status":\([0-9]*\).*/\1/p' || true)"
+        case "${status:-}" in
+            0)  echo "  - ${d}  ✅ 可解析"; ok=$((ok + 1)) ;;
+            3)  echo "  - ${d}  ❌ NXDOMAIN(域名不存在/被注册商停权)"; dead=$((dead + 1)); dead_list="${dead_list} ${d}" ;;
+            2)  echo "  - ${d}  ⚠️  SERVFAIL(DNS 上游不可达)"; dead=$((dead + 1)); dead_list="${dead_list} ${d}" ;;
+            *)  echo "  - ${d}  ⚠️  解析超时/无响应"; dead=$((dead + 1)); dead_list="${dead_list} ${d}" ;;
+        esac
+    done
+
+    if [ "$ok" -eq 0 ] && [ "$dead" -gt 0 ]; then
+        cat <<EOF
+
+#########################################################################
+ [entry-domain] ❌ 致命:订阅内所有节点入口域名都无法解析(${dead_list})。
+   所有节点拨号都会 DNS 失败 —— 容器侧只会表现为 curl
+   "Empty reply from server",而不是明确的连接错误,极易误判成沙箱故障。
+   这几乎总是机场侧问题(域名 NXDOMAIN = 被注册商 clientHold/停权,
+   或已轮换入口域名),本地配置无法修复。
+   → 请更换 CLASH_URL 订阅,或联系机场客服(见订阅内 info 节点)。
+#########################################################################
+EOF
+    elif [ "$dead" -gt 0 ]; then
+        echo "[entry-domain] ⚠️  部分入口域名失效(${dead_list}):相关节点会被健康检查自动跳过。"
+    else
+        echo "[entry-domain] ✅ 全部入口域名可解析。"
+    fi
+}
+
+#------------------------------------------------------------------------------
 # 3. Launch mihomo in the background, logs redirected
 #------------------------------------------------------------------------------
 echo "[entrypoint] Starting mihomo (logs: ${LOG_FILE}) ..."
@@ -186,6 +291,17 @@ else
 fi
 
 printf 'nameserver 127.0.0.1\n' > /etc/resolv.conf
+
+#------------------------------------------------------------------------------
+# 4c. 入口域名存活自检(等 provider 拉取完成后执行;纯告警,不阻断启动)
+#------------------------------------------------------------------------------
+for _wait in $(seq 1 15); do
+    if [ -s "${MIHOMO_DIR}/providers/sub.yaml" ] || [ -s "${MIHOMO_DIR}/proxies-static.yaml" ]; then
+        break
+    fi
+    sleep 1
+done
+check_entry_domains || true
 
 #------------------------------------------------------------------------------
 # 4b. Disable agy's built-in auto-updater.
