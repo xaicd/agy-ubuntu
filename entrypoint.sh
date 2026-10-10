@@ -47,7 +47,7 @@ if [ -n "${CLASH_URL:-}" ]; then
     # 本地兜底节点(可选):宿主机导出的 proxies-static.yaml。订阅入口域名被停权/
     # 轮换时,订阅里所有节点都拨不通,只有它还能救命 —— 并入 PROXY-RESCUE。
     LOCAL_PROVIDER_BLOCK=""
-    LOCAL_USE=""
+    USE_ITEMS="      - sub"
     if [ -f "${MIHOMO_DIR}/proxies-static.yaml" ]; then
         LOCAL_PROVIDER_BLOCK="  local:
     type: file
@@ -57,9 +57,11 @@ if [ -n "${CLASH_URL:-}" ]; then
       url: https://www.gstatic.com/generate_204
       interval: 300
 "
-        LOCAL_USE='
-      - local'
-        echo "[entrypoint] 检测到本地兜底节点 proxies-static.yaml,并入 PROXY-RESCUE。"
+        # 本地兜底节点排在订阅之前:订阅入口域名失效时,mihomo 启动即选中可用节点,
+        # 不必等健康检查逐个淘汰死节点(否则启动后一段时间连接会卡 i/o timeout)
+        USE_ITEMS="      - local
+      - sub"
+        echo "[entrypoint] 检测到本地兜底节点 proxies-static.yaml,优先并入 PROXY-GEO/RESCUE。"
     fi
 
     cat > "${CONFIG}" <<EOF
@@ -91,7 +93,7 @@ ${LOCAL_PROVIDER_BLOCK}proxy-groups:
   - name: PROXY-GEO
     type: fallback
     use:
-      - sub${LOCAL_USE}
+${USE_ITEMS}
     # 优先日/台/智核心加速档(2026-09-26 逐节点验证全通);美国档同为核心加速,
     # 2026-10-09 重新纳入候选池:Google 200 健康检查会自动淘汰被判不支持地区的
     # 出口(失败的 5 分钟内被 fallback 跳过),不再一刀切排除地理
@@ -106,7 +108,7 @@ ${LOCAL_PROVIDER_BLOCK}proxy-groups:
   - name: PROXY-RESCUE
     type: fallback
     use:
-      - sub${LOCAL_USE}
+${USE_ITEMS}
     url: http://www.google.com
     expected-status: "200"
     interval: 300

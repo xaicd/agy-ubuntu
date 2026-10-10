@@ -79,19 +79,20 @@ entrypoint 启动后额外做两件事,专治「容器明明起来了、`curl` �
 
 机场会轮换入口域名。**2026-10-10 实测**:该订阅的入口域名 `qianmo.org` 被注册商置于 `clientHold`(`.org` 注册局 RDAP 可查,全局 NXDOMAIN),而面板仍对所有客户端下发该域名 —— 于是**订阅里全部节点都拨不通**,容器侧只表现为 `curl: Empty reply from server`。同一订阅在宿主机还能用,只是因为宿主机客户端缓存的是旧快照(入口域名不同,如 `node.yukoupaper.com`、`*.qianmoip.win` 仍可解析)。
 
-兜底办法:把宿主机客户端里**当前仍可解析**的节点导出为 `mihomo-conf/proxies-static.yaml`(该目录已被 `.gitignore` 忽略,不会泄露凭据):
+兜底办法:用 `scripts/export-nodes-linux.sh` 从宿主机 clash 配置里挑出**当前仍可解析**的节点,导出为 `mihomo-conf/proxies-static.yaml`(该目录已被 `.gitignore` 忽略,不会泄露凭据):
 
 ```bash
-SRC=~/clashctl/resources/runtime.yaml        # 换成你的 clash/clashctl 配置
-{ echo "proxies:"
-  grep 'server: node.yukoupaper.com'        "$SRC" | sed -E 's/【1x】//; s/\[边缘加速\]/[CF]/'
-  grep -E 'server: [a-z0-9]+\.qianmoip\.win' "$SRC" | sed -E 's/【1x】//; s/\[边缘加速\]/[IP]/'
-} > mihomo-conf/proxies-static.yaml
+bash scripts/export-nodes-linux.sh                                     # 自动探测源配置
+bash scripts/export-nodes-linux.sh ~/clashctl/resources/runtime.yaml   # 显式指定源
 ```
 
-entrypoint 启动时若检测到该文件(`-f`),会把它作为额外的 `local` provider 并入 `PROXY-GEO` 与 `PROXY-RESCUE`;文件缺失则静默跳过(`docker-compose.yml` 已挂载该路径)。机场恢复入口域名后删除该文件即可回到纯订阅模式。
+脚本要点:
 
-> 命名注意:不同入口(`node.yukoupaper.com` 与 `tw01.qianmoip.win` 等)可能有同名节点,重命名时务必加后缀(如 `[CF]`/`[IP]`)区分,否则会被 mihomo 去重、只剩其一。
+- **只保留入口能解析出真实 A 记录的节点** —— 判定用的是容器内 mihomo 的同款 nameserver(`223.5.5.5`/`114.114.114.114`),而非系统解析器;否则悬空 CNAME(如 `node.yukoupaper.com` 只 CNAME 到 CloudFront 却无 A)会被误判为可用,导进去照样拨不通。
+- 规范化节点名:去掉 `【1x】`/`[边缘加速]` 等会被 `exclude-filter` 挡在 GEO 外的标记,并追加 `[<入口标签>]` 防重名。
+- 导出后对运行中的容器热刷新 `local` provider(`PUT /providers/proxies/local`),无需重启、不碰 TUN。
+
+entrypoint 启动时若检测到该文件(`-f`),会把它作为额外的 `local` provider **排在订阅之前**并入 `PROXY-GEO` 与 `PROXY-RESCUE` —— 订阅入口域名失效时 mihomo 启动即选中可用节点,不必等健康检查逐个淘汰死节点(否则启动后一段时间连接会卡 `i/o timeout`)。文件缺失则静默跳过(`docker-compose.yml` 已挂载该路径)。机场恢复入口域名后删除该文件即可回到纯订阅模式。
 
 ## 版本标签与回滚
 
