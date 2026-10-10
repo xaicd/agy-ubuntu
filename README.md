@@ -92,7 +92,9 @@ bash scripts/export-nodes-linux.sh ~/clashctl/resources/runtime.yaml   # 显式�
 - 规范化节点名:去掉 `【1x】`/`[边缘加速]` 等会被 `exclude-filter` 挡在 GEO 外的标记,并追加 `[<入口标签>]` 防重名。
 - 导出后对运行中的容器热刷新 `local` provider(`PUT /providers/proxies/local`),无需重启、不碰 TUN。
 
-entrypoint 启动时若检测到该文件(`-f`),会把它作为额外的 `local` provider **排在订阅之前**并入 `PROXY-GEO` 与 `PROXY-RESCUE` —— 订阅入口域名失效时 mihomo 启动即选中可用节点,不必等健康检查逐个淘汰死节点(否则启动后一段时间连接会卡 `i/o timeout`)。文件缺失则静默跳过(`docker-compose.yml` 已挂载该路径)。机场恢复入口域名后删除该文件即可回到纯订阅模式。
+entrypoint 启动时若检测到该文件(`-f`),会把它作为额外的 `local` provider **排在订阅之前**并入 `PROXY-GEO` 与 `PROXY-RESCUE` —— 订阅入口域名失效时 mihomo 启动即选中可用节点,不必等健康检查逐个淘汰死节点(否则启动后一段时间连接会卡 `i/o timeout`)。机场恢复入口域名后删除该文件即可回到纯订阅模式。
+
+> ⚠️ 坑(2026-10-10 实测):`docker-compose.yml` 以**文件**方式 bind-mount 该路径,若宿主机上该文件**不存在**,Docker 会在挂载点自动建一个**空目录**。此时 entrypoint 的 `-f` 判断落空 → `local` provider 静默不接 → 兜底形同虚设,容器侧仍只报 `curl: Empty reply from server`,极难排查。现 entrypoint 会在该路径存在但**不是普通文件**时打印显式告警。修复:先在宿主机 `scripts/export-nodes-linux.sh` 生成文件(会覆盖那个空目录前先 `rmdir`),再 `docker compose up -d --force-recreate` 让挂载重新解析为文件。
 
 ## 版本标签与回滚
 

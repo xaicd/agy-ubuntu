@@ -29,6 +29,14 @@ TUN_MTU="${TUN_MTU:-${ETH0_MTU:-1500}}"
 #------------------------------------------------------------------------------
 mkdir -p "${MIHOMO_DIR}/providers"
 
+# bind-mount 源文件缺失时,Docker 会在挂载点建一个**目录**(而非文件);只靠 -f
+# 判断会静默跳过本地兜底,导致"明明配了兜底却没生效"的隐性断网(容器侧仍表现为
+# curl「Empty reply from server」)。这里显式提示,便于一眼定位。
+if [ -e "${MIHOMO_DIR}/proxies-static.yaml" ] && [ ! -f "${MIHOMO_DIR}/proxies-static.yaml" ]; then
+    echo "[entrypoint] ⚠️  ${MIHOMO_DIR}/proxies-static.yaml 不是普通文件(多为宿主机源文件缺失、被 Docker 建成目录),本地兜底节点未生效;" >&2
+    echo "              请先在宿主机用 scripts/export-nodes-linux.sh 生成该文件,再重建容器。" >&2
+fi
+
 # 先置空:静态分支的 heredoc 同样展开 ${SUB_DIRECT_RULES},不初始化会触发 set -u
 SUB_DIRECT_RULES=""
 
