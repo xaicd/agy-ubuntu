@@ -404,6 +404,16 @@ for search_base in /root/workspace/agy-ubuntu /root/workspace/wenlv-next /root/w
 done
 echo "[entrypoint] Global Claude commands & skills initialized."
 
+# 5.2 Antigravity 全局记忆与拓扑同步 (GEMINI.md)
+for gfile in /root/workspace/agy-ubuntu/GEMINI.md /host-workspace/agy-ubuntu/GEMINI.md /workspace/agy-ubuntu/GEMINI.md; do
+    if [ -f "$gfile" ]; then
+        mkdir -p /root/.gemini/config
+        cp -f "$gfile" /root/.gemini/config/GEMINI.md
+        echo "[entrypoint] Antigravity global environment memory synced."
+        break
+    fi
+done
+
 
 #------------------------------------------------------------------------------
 # 6. Welcome banner + interactive shell
