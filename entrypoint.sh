@@ -368,8 +368,10 @@ if [ -d /root/.ssh-host ] && [ -n "$(ls -A /root/.ssh-host 2>/dev/null)" ]; then
     mkdir -p /root/.ssh
     cp -r /root/.ssh-host/. /root/.ssh/ 2>/dev/null
     chmod 700 /root/.ssh
-    chmod 600 /root/.ssh/id_* 2>/dev/null
-    chmod 644 /root/.ssh/*.pub /root/.ssh/known_hosts* 2>/dev/null
+    # 宿主机可能只有 authorized_keys / config(无 id_*/.*pub),未匹配的 glob
+    # 在 set -e 下会让整个 entrypoint 退出 → 容器无限重启,故逐个兜底。
+    chmod 600 /root/.ssh/id_* 2>/dev/null || true
+    chmod 644 /root/.ssh/*.pub /root/.ssh/known_hosts* 2>/dev/null || true
     cat > /root/.ssh/config <<'EOF'
 Host github.com
     HostName ssh.github.com

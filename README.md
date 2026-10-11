@@ -10,17 +10,32 @@ Ubuntu 24.04 沙盒开发容器:内嵌 **Mihomo (Clash Meta) TUN** 全流量隔�
 ## 快速开始
 
 ```bash
+# 方式 A: 全自动一键部署 (推荐 - 适用于任意 Linux / macOS 宿主机)
+bash scripts/setup-host-agy.sh
+
+# 脚本会自动:
+# 1. 检查 Docker 与 TUN 环境
+# 2. 自动配置宿主机回环 SSH 信任 (激活容器内 host-exec 穿透能力)
+# 3. 安装宿主机全局 agy 命令行包装器 (~/.local/bin/agy)
+# 4. 启动容器并执行健康拨测
+
+# 方式 B: 手动标准启动
 # 1. 配置订阅(必填)
 cp .env.example .env
 # 编辑 .env,填入你的 mihomo 订阅链接(CLASH_URL)
 
 # 2. 启动(自动拉取 Docker Hub 镜像 chw717/ai-agy:latest,无需本地构建)
 docker compose up -d
-
-# 3. 进入
-docker attach agy-ubuntu-container
-agy   # 登录并开始
 ```
+
+## 宿主机像原生一样使用 `agy` (透明容器化)
+
+运行 `bash scripts/setup-host-agy.sh` 后，宿主机已全局注册 `agy` 命令：
+- **任意工程目录交互**: 在宿主机任意项目目录下直接输入 `agy`，自动在容器对应工作目录打开会话。
+- **命令行任务**: `agy -p "用中文总结该项目结构"`
+- **数字员工免交互**: `agy --dangerously-skip-permissions -c`
+- **容器反向调用宿主机**: 容器内执行 `host-exec "<cmd>"` 可无缝穿透回当前宿主机执行系统工具。
+
 
 ## 共享 git / SSH
 
