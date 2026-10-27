@@ -7,7 +7,7 @@
 # 容器不会 —— 所以"容器代理经常挂"时先跑本脚本刷新,再热重载。
 #
 # 做三件事:
-#   1. 在 ~/Library/Application Support 下找千陌/FlClash 最新 profile(com.qianmo*)
+#   1. 读取阡陌星云 App 的实时 config.yaml(官方已停用动态订阅;缺失时回退 profiles 快照)
 #   2. 抽出 proxies: 段 → mihomo-conf/proxies-static.yaml(备份旧文件)
 #      并同步 mihomo-extra/proxies-arm64.yaml
 #   3. 对运行中的 agy 容器(base/e2e)调 9090 API 无缝热重载(不杀进程)
@@ -21,19 +21,24 @@ STATIC="${REPO_DIR}/mihomo-conf/proxies-static.yaml"
 EXTRA="${REPO_DIR}/mihomo-extra/proxies-arm64.yaml"
 APP_SUPPORT="${HOME}/Library/Application Support"
 
-# 1. 找最新 profile(千陌目录名带随机后缀,profiles/*.yaml 按修改时间取最新)
-PROFILE="$(ls -t "${APP_SUPPORT}"/com.qianmoltd.qianmo/profiles/*.yaml 2>/dev/null | head -n1 || true)"
-if [ -z "${PROFILE}" ]; then
-    echo "[export] ❌ 未找到千陌 profile(${APP_SUPPORT}/com.qianmoltd.qianmo/profiles/*.yaml)" >&2
-    echo "[export]    请确认阡陌星云已运行并更新过订阅。" >&2
+# 1. 优先用阡陌星云 App 的**实时 config.yaml**(官方已取消动态订阅,
+#    客户端只维护这一份实时配置);profiles/*.yaml 是历史快照,仅作兜底。
+QIANMO_DIR="${APP_SUPPORT}/com.qianmoltd.qianmo"
+PROFILE="${QIANMO_DIR}/config.yaml"
+if [ ! -f "${PROFILE}" ]; then
+    PROFILE="$(ls -t "${QIANMO_DIR}"/profiles/*.yaml 2>/dev/null | head -n1 || true)"
+fi
+if [ -z "${PROFILE}" ] || [ ! -f "${PROFILE}" ]; then
+    echo "[export] ❌ 未找到阡陌星云实时配置(${QIANMO_DIR}/config.yaml)或历史 profile。" >&2
+    echo "[export]    请确认阡陌星云已安装并运行过。" >&2
     exit 1
 fi
-echo "[export] 源 profile: ${PROFILE} ($(stat -f '%Sm' "${PROFILE}"))"
+echo "[export] 源配置: ${PROFILE} ($(stat -f '%Sm' "${PROFILE}"))"
 
 # 2. 抽取 proxies: 段(到下一个顶层键为止)
 TMP="$(mktemp)"
 awk '/^proxies:/{f=1;print;next} f&&/^[A-Za-z-]+:/{exit} f{print}' "${PROFILE}" > "${TMP}"
-COUNT="$(grep -c 'name:' "${TMP}" || true)"
+COUNT="$(grep -cE 'server: ' "${TMP}" || true)"
 if [ "${COUNT:-0}" -lt 3 ]; then
     echo "[export] ❌ 抽取异常(仅 ${COUNT} 个节点),中止,不覆盖现有文件。" >&2
     rm -f "${TMP}"
