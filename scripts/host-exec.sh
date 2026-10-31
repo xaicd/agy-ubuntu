@@ -81,8 +81,8 @@ fi
 
 # 3. Map working directory
 CONTAINER_CWD="$(pwd)"
-if [[ "$CONTAINER_CWD" =~ ^/host-workspace(/.*)?$ ]]; then
-  SUB_PATH="${BASH_REMATCH[1]:-}"
+if [[ "$CONTAINER_CWD" =~ ^/(host-workspace|root/workspace)(/.*)?$ ]]; then
+  SUB_PATH="${BASH_REMATCH[2]:-}"
   if [[ "$HOST_OS" == "darwin" ]]; then
     HOST_CWD="/Users/${HOST_USER}/workspace${SUB_PATH}"
   else
