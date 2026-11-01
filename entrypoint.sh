@@ -106,8 +106,9 @@ ${USE_ITEMS}
     # 判为不支持地区(Gemini 报 User location is not supported),2026-10-27 起
     # 一并硬排除,不再依赖健康检查兜底
     filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*"
-    # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
-    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|【1X】|边缘加速).*"
+    # 2026-11-01:3X 核心/10X 专线 全部经同一 40.160.141.80 出口(Google 判 HK→302),
+    # 改吃 1X 边缘加速(CloudFront,按地区正确落地 JP/CL/TW),故排除 3X/10X 核心/专线
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|【3X】|【10X】|核心加速|专线加速).*"
     url: http://www.google.com
     expected-status: "200"
     interval: 300
@@ -168,8 +169,9 @@ proxy-groups:
     # 判为不支持地区(Gemini 报 User location is not supported),2026-10-27 起
     # 一并硬排除,不再依赖健康检查兜底
     filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*"
-    # 1X 档(边缘加速,CloudFront 前置)底座不稳,曾整晚间歇性断流,一并排除
-    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|【1X】|边缘加速).*"
+    # 2026-11-01:3X 核心/10X 专线 全部经同一 40.160.141.80 出口(Google 判 HK→302),
+    # 改吃 1X 边缘加速(CloudFront,按地区正确落地 JP/CL/TW),故排除 3X/10X 核心/专线
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|【3X】|【10X】|核心加速|专线加速).*"
     url: http://www.google.com
     expected-status: "200"
     interval: 300
