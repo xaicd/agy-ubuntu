@@ -168,10 +168,21 @@ proxy-groups:
     # 优先日/台/智核心加速档(2026-09-26 逐节点验证全通);美国档出口被 Google
     # 判为不支持地区(Gemini 报 User location is not supported),2026-10-27 起
     # 一并硬排除,不再依赖健康检查兜底
-    filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*"
+    filter: ".*(日本|新加坡|智利|台湾|台灣|Japan|Singapore|Chile|Taiwan|🇯🇵|🇸🇬|🇨🇱|🇹🇼).*"
     # 2026-11-01:3X 核心/10X 专线 全部经同一 40.160.141.80 出口(Google 判 HK→302),
     # 改吃 1X 边缘加速(CloudFront,按地区正确落地 JP/CL/TW),故排除 3X/10X 核心/专线
-    exclude-filter: ".*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|【3X】|【10X】|核心加速|专线加速).*"
+    #
+    # 2026-11-02 修订(墨斗 agy_local 通道停摆实证):
+    #   GEO 组只留【3X】美国02 一档时,该节点出口 40.160.141.86 已被 Google 判为
+    #   "User location is not supported for the API use"(400),且其健康检查
+    #   https://www.gstatic.com/generate_204 全部 timeout(delay=0)⇒ GEO 组整个
+    #   退化成单节点死出口 ⇒ mihomo 对所有 HTTPS 返 SSL_ERROR_SYSCALL ⇒
+    #   Antigravity OAuth 刷新失败 ⇒ "You are not logged into Antigravity" ⇒
+    #   模型清单为空 ⇒ agy 报 "plan model not specified"(症状,非根因)。
+    #   实测【3X】日本01(出口 45.95.212.34)与【3X】新加坡01(出口 152.175.66.145)
+    #   被 Google 判为支持地区,agy 实跑 status=SUCCESS ⇒ GEO 组必须含多档
+    #   跨地区节点,且健康检查 URL 换成 google 根页而非 generate_204。
+    exclude-filter: ".*(香港|HK|Hong Kong|澳门|Macao|美国|美國|USA|United States|🇺🇸|【1X】|【10X】|边缘加速|专线加速).*"
     url: http://www.google.com
     expected-status: "200"
     interval: 300
