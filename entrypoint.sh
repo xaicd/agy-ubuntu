@@ -62,7 +62,8 @@ if [ -n "${CLASH_URL:-}" ]; then
     path: ${MIHOMO_DIR}/proxies-static.yaml
     health-check:
       enable: true
-      url: https://www.gstatic.com/generate_204
+      url: http://www.google.com
+      expected-status: \"200\"
       interval: 300
 "
         # 本地兜底节点排在订阅之前:订阅入口域名失效时,mihomo 启动即选中可用节点,
@@ -88,7 +89,8 @@ proxy-providers:
     path: ${MIHOMO_DIR}/providers/sub.yaml
     health-check:
       enable: true
-      url: https://www.gstatic.com/generate_204
+      url: http://www.google.com
+      expected-status: "200"
       interval: 300
 ${LOCAL_PROVIDER_BLOCK}proxy-groups:
   # 结构:PROXY(统一出口) → [PROXY-GEO(合规主组) → PROXY-RESCUE(降级组)]
@@ -151,7 +153,8 @@ proxy-providers:
     path: ${MIHOMO_DIR}/proxies-static.yaml
     health-check:
       enable: true
-      url: https://www.gstatic.com/generate_204
+      url: http://www.google.com
+      expected-status: "200"
       interval: 300
 proxy-groups:
   # 结构:PROXY(统一出口) → [PROXY-GEO(合规主组) → PROXY-RESCUE(降级组)]
@@ -314,13 +317,40 @@ EOF
 }
 
 #------------------------------------------------------------------------------
-# 3. Launch mihomo in the background, logs redirected
+# 3. Validate the generated config BEFORE starting mihomo.
+#    2026-11-02 事故复盘:容器内 config.yaml 曾残留未展开的 ${SUB_DIRECT_RULES}
+#    占位符 ⇒ YAML 非法 ⇒ mihomo 下次启动即全盘失败,而当时进程仍靠 22:12 的
+#    内存态侥幸存活 ⇒ 表面"已修复"实则一重启即断网。
+#    这里用 mihomo 自带的 -t 做语法门禁:不通过就带着备份启动,绝不静默带病上岗。
+#------------------------------------------------------------------------------
+echo "[entrypoint] Validating generated config (mihomo -t) ..."
+if mihomo -t -d "${MIHOMO_DIR}" >/tmp/mihomo-config-test.log 2>&1; then
+    echo "[entrypoint] ✅ config.yaml 语法校验通过。"
+else
+    echo "[entrypoint] ❌ config.yaml 语法校验失败 —— 详见 /tmp/mihomo-config-test.log" >&2
+    tail -5 /tmp/mihomo-config-test.log >&2
+    if [ -f "${CONFIG}.bak.last-good" ]; then
+        echo "[entrypoint]    回滚到上一份可用配置 ${CONFIG}.bak.last-good" >&2
+        cp "${CONFIG}.bak.last-good" "${CONFIG}"
+    else
+        echo "[entrypoint]    无可用备份,中止启动(避免带病上岗导致全盘断网)。" >&2
+        exit 1
+    fi
+    mihomo -t -d "${MIHOMO_DIR}" >/tmp/mihomo-config-test.log 2>&1 \
+        && echo "[entrypoint] ✅ 回滚后配置校验通过。" \
+        || { echo "[entrypoint] ❌ 回滚后仍校验失败,中止启动。" >&2; exit 1; }
+fi
+# 留一份"上一份可用配置"快照,供下次启动回滚用
+cp -f "${CONFIG}" "${CONFIG}.bak.last-good"
+
+#------------------------------------------------------------------------------
+# 4. Launch mihomo in the background, logs redirected
 #------------------------------------------------------------------------------
 echo "[entrypoint] Starting mihomo (logs: ${LOG_FILE}) ..."
 mihomo -d "${MIHOMO_DIR}" > "${LOG_FILE}" 2>&1 &
 
 #------------------------------------------------------------------------------
-# 4. Give the clash0 TUN interface a moment to spin up, then lock down DNS.
+# 5. Give the clash0 TUN interface a moment to spin up, then lock down DNS.
 #    Overwrite /etc/resolv.conf — never append — so the container can only
 #    ever resolve through mihomo.
 #------------------------------------------------------------------------------
@@ -358,7 +388,7 @@ if [ -d /root/.gemini/antigravity-cli/updater ]; then
 fi
 
 #------------------------------------------------------------------------------
-# 5. Share host git identity + SSH keys (so git commit/push works in-container).
+# 6. Share host git identity + SSH keys (so git commit/push works in-container).
 #    Windows bind mounts give SSH keys wrong permissions — copy + chmod 600.
 #    GitHub HTTPS remotes are rewritten to SSH (uses the shared key, no PAT),
 #    routed over ssh.github.com:443 (SSH-over-HTTPS, reliable behind proxies).
@@ -397,7 +427,7 @@ EOF
 fi
 
 #------------------------------------------------------------------------------
-# 5.1 Claude / Antigravity 全局 Commands & Skills 联动与初始化
+# 6.1 Claude / Antigravity 全局 Commands & Skills 联动与初始化
 #------------------------------------------------------------------------------
 mkdir -p /root/.claude/commands /root/.claude/skills /root/.agents/skills
 
@@ -417,7 +447,7 @@ for search_base in /root/workspace/agy-ubuntu /root/workspace/wenlv-next /root/w
 done
 echo "[entrypoint] Global Claude commands & skills initialized."
 
-# 5.2 Antigravity 全局记忆与拓扑同步 (GEMINI.md)
+# 6.2 Antigravity 全局记忆与拓扑同步 (GEMINI.md)
 for gfile in /root/workspace/agy-ubuntu/GEMINI.md /host-workspace/agy-ubuntu/GEMINI.md /workspace/agy-ubuntu/GEMINI.md; do
     if [ -f "$gfile" ]; then
         mkdir -p /root/.gemini/config
@@ -429,7 +459,7 @@ done
 
 
 #------------------------------------------------------------------------------
-# 6. Welcome banner + interactive shell
+# 7. Welcome banner + interactive shell
 #------------------------------------------------------------------------------
 cat <<'BANNER'
 
