@@ -65,6 +65,36 @@ docker compose up -d
 **宿主侧透明代理**(容器内跑,吃容器出口):`~/.local/bin/` 下安装 `claude.sh` / `cmd.sh` / `copilot.sh` / `kiro-cli.sh`。
 统一用 `.sh` 后缀、**不覆盖宿主原生的 `claude`/`cmd`** —— 宿主 claude 有 provider 软链切换机制(`~/.claude/settings.json → settings.jsonglm`),被顶掉会出事。
 
+## 代理自愈(launchd 每 2 小时)
+
+`scripts/auto-heal-proxy.sh` 巡检三处出口(本地容器 / aja-pc 容器 / aja-pc 宿主机 mihomo),不健康则依次:踢 provider 健康检查 → 强制热重载 → PIN 逐节点探测换干净节点。
+
+- **全程只走 9090 API 热重载**,不重启 mihomo 进程 —— 不会打断容器里正在跑的 agy 会话。
+- 探针用 google 首页 `%{redirect_url}`(不用 `generate_204`,它对香港判定出口照样返 204),agy 资格端点**连测 2 次**(出口 flaky 时单次会漏报)。
+- PIN 探测期会把 `MATCH,PROXY` 临时改写为 `MATCH,PIN`,否则切节点不影响流量(测的都是同一个默认出口)。
+- 导出节点时有**合规花名册门禁**:机场若换成没有日/台/智/韩节点的新表,自动回滚保留旧表(美/新是 agy 拒用区)。
+
+装载定时任务(需你确认后手动执行):
+
+```bash
+cp launchd/ai.agy.proxy-heal.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/ai.agy.proxy-heal.plist
+launchctl list | grep agy     # 应看到 ai.agy.proxy-heal
+```
+
+日志:`~/Library/Logs/agy-proxy-heal.log`。手动跑一轮:`bash scripts/auto-heal-proxy.sh`。
+
+### aja-pc 宿主机 mihomo 出口修复
+
+宿主机 mihomo 是**全局 TUN + auto-route**,修它的出口必须谨慎(否则会劫持 tailscale 核心网络):
+
+```bash
+bash scripts/fix-aja-pc-host-mihomo.sh --check   # 只读体检:出口/DIRECT 规则/provider 状态
+bash scripts/fix-aja-pc-host-mihomo.sh --fix     # 修复(改 provider path + 热重载,不碰 rules)
+```
+
+原理同容器侧:mihomo 的 file provider **只认内存不认磁盘**,`PUT /providers/proxies/static` 只重测不重读;唯一可靠办法是**换 provider path** 强制重读。该脚本只改 path 一行、**不碰 rules 段**、**不重启进程**,并在改前校验 `100.64.0.0/10` 与 `172.16.0.0/12` 的 DIRECT 规则齐全(缺则中止)。
+
 ## 构建说明
 
 镜像已发布到 **Docker Hub**(`chw717/ai-agy:latest`),`docker compose up -d` 会自动拉取,**无需本地构建**。
