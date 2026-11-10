@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.agy.proxy-heal</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/mac/workspace/agy-ubuntu/scripts/auto-heal-proxy.sh</string>
+    </array>
+
+    <!-- 每 2 小时巡检一次:体检本地容器 + aja-pc 容器 + aja-pc 宿主机 mihomo,
+         不健康则踢 provider 健康检查 + 热重载 + PIN 换节点。
+         全程只走 9090 API 热重载,不重启 mihomo 进程(避免打断 agy 会话)。 -->
+    <key>StartInterval</key>
+    <integer>7200</integer>
+
+    <!-- 不随登录触发,避免开机瞬间与 mihomo 冷启动抢跑 -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mac/Library/Logs/agy-proxy-heal.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mac/Library/Logs/agy-proxy-heal.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mac/workspace/agy-ubuntu</string>
+</dict>
+</plist>
