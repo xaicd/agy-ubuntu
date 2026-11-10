@@ -71,6 +71,10 @@ mkdir -p "$PROJECT_ROOT/agy-home"
 mkdir -p "$PROJECT_ROOT/claude-home"
 mkdir -p "$PROJECT_ROOT/workspace"
 mkdir -p "$PROJECT_ROOT/mihomo-conf"
+# 模型 CLI 的配置/登录态持久化目录(缺失会被 Docker 建成 root 属主的目录,
+# 导致宿主写不进去 —— 提前建好并保持当前用户属主)
+mkdir -p "$PROJECT_ROOT/copilot-home" "$PROJECT_ROOT/kiro-home"
+mkdir -p "$PROJECT_ROOT/cmd-home" "$PROJECT_ROOT/cmd-home-skills"
 
 # 5. 配置宿主机回环 SSH 信任 (供容器 host-exec 穿透调用)
 mkdir -p "$HOME/.ssh"
@@ -99,6 +103,8 @@ fi
 # 6. 启动/重启 Docker 容器
 log_info "拉取并启动 agy 容器..."
 cd "$PROJECT_ROOT"
+# 持久化卷:模型 CLI 二进制本体(claude/cmd/copilot/kiro-cli/agy),容器重建不丢
+bash "$PROJECT_ROOT/scripts/init-tools-volumes.sh" 2>&1 | sed 's/^/    /' || true
 docker compose -f "$COMPOSE_FILE" up -d
 log_succ "agy-ubuntu-container 启动成功"
 
@@ -107,6 +113,17 @@ log_info "安装宿主机全局 agy 快捷命令..."
 mkdir -p "$HOME/.local/bin"
 cp "$PROJECT_ROOT/scripts/agy-host-wrapper.sh" "$HOME/.local/bin/agy"
 chmod +x "$HOME/.local/bin/agy"
+
+# 其余模型 CLI 的宿主透明代理(容器内跑,吃容器合规出口)
+# 注意:统一用 .sh 后缀安装到 ~/.local/bin,不覆盖宿主原生 claude/cmd/copilot/kiro,
+#       避免与宿主自身会话抢 PATH(宿主 claude 有 provider 软链切换,不能被顶掉)
+for w in claude cmd copilot kiro-cli; do
+    src="$PROJECT_ROOT/scripts/${w}-host-wrapper.sh"
+    [ -f "$src" ] || continue
+    cp "$src" "$HOME/.local/bin/${w}.sh"
+    chmod +x "$HOME/.local/bin/${w}.sh"
+done
+log_succ "已安装宿主代理: claude.sh cmd.sh copilot.sh kiro-cli.sh"
 
 # 若用户有 sudo 权限，同步安装到 /usr/local/bin/agy
 if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then

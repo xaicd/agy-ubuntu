@@ -20,6 +20,10 @@ claude/
 .claude/*
 !.claude/commands/
 .commandcode/
+cmd-home/
+cmd-home-skills/
+copilot-home/
+kiro-home/
 
 # ===== 备份/杂项 =====
 *.tar

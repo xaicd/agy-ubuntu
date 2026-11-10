@@ -457,6 +457,117 @@ for gfile in /root/workspace/agy-ubuntu/GEMINI.md /host-workspace/agy-ubuntu/GEM
     fi
 done
 
+# 6.3 Copilot & Kiro CLI 全局状态自检、挂载与自愈
+mkdir -p /root/.copilot /root/.kiro
+if [ -d /root/.copilot-host ] && [ -f /root/.copilot-host/config.json ]; then
+    if [ ! -f /root/.copilot/config.json ]; then
+        cp -r /root/.copilot-host/. /root/.copilot/ 2>/dev/null || true
+        chmod 700 /root/.copilot 2>/dev/null || true
+        chmod 600 /root/.copilot/* 2>/dev/null || true
+        echo "[entrypoint] Copilot auth & config initialized from host (~/.copilot)."
+    fi
+fi
+
+#------------------------------------------------------------------------------
+# 6.4 多 CLI 工具链持久化(npm 全局 prefix + ~/.local/bin 均为命名卷)
+#
+# 背景: claude / cmd / copilot / kiro-cli 都是模型 CLI,都必须吃容器这条合规出口。
+#   但它们原本装在容器可写层(/usr/local/lib/node_modules、/root/.local/bin),
+#   `docker rm` + 重建即全部消失 —— 这正是"重建后又要重登一遍"的根因。
+# 方案:npm 全局 prefix 指向命名卷 /opt/agy-tools,~/.local/bin 也用命名卷;
+#   二进制本体随卷留存,登录态/配置走 bind mount(见 compose)。
+#   兼容旧容器:若 /usr/local/lib/node_modules 已有包(旧装法),迁进 prefix。
+#------------------------------------------------------------------------------
+TOOLS_PREFIX="${NPM_CONFIG_PREFIX:-/opt/agy-tools}"
+mkdir -p "${TOOLS_PREFIX}/bin" /root/.local/bin
+
+# PATH 兜底:compose 已设 PATH,此处对 docker exec 进容器的老路径再兜一层
+case ":${PATH}:" in
+    *":${TOOLS_PREFIX}/bin:"*) ;;
+    *) export PATH="${TOOLS_PREFIX}/bin:${PATH}"; ;;
+esac
+
+# 旧装法迁移:把 /usr/local/lib/node_modules 里的第三方全局包搬进 prefix
+if [ -d /usr/local/lib/node_modules ]; then
+    for pkg in @anthropic-ai @github command-code; do
+        [ -e "/usr/local/lib/node_modules/${pkg}" ] || continue
+        [ -e "${TOOLS_PREFIX}/lib/node_modules/${pkg}" ] && continue
+        mkdir -p "${TOOLS_PREFIX}/lib/node_modules"
+        cp -a "/usr/local/lib/node_modules/${pkg}" "${TOOLS_PREFIX}/lib/node_modules/" 2>/dev/null || true
+        echo "[entrypoint] migrated ${pkg} into persistent prefix ${TOOLS_PREFIX}."
+    done
+fi
+
+# 四个模型 CLI 的安装(装进持久化 prefix,容器重建不丢)
+ensure_npm_cli(){  # $1=包名  $2=命令名
+    local pkg="$1" cmdname="$2"
+    # 只认 prefix 里的:可写层(/usr/local/bin)的同名命令重建即失,不能算"已装"
+    if [ -x "${TOOLS_PREFIX}/bin/${cmdname}" ]; then return 0; fi
+    if [ -e "${TOOLS_PREFIX}/lib/node_modules/${pkg}/package.json" ]; then
+        # 包体已在卷里,只是软链没重建(prefix 变更后常见)——手工补软链
+        mkdir -p "${TOOLS_PREFIX}/bin"
+        # 包可能声明多个 bin 别名(command-code: cmd/cmdc/command-code/commandcode),
+        # 全部补齐,不然只有主命令能用
+        node -e "
+            const p=require('${TOOLS_PREFIX}/lib/node_modules/${pkg}/package.json');
+            const b=p.bin||{};
+            const m=(typeof b==='string')?{'${cmdname}':b}:b;
+            for(const [k,v] of Object.entries(m)){
+                console.log(k+' '+v);
+            }
+        " 2>/dev/null | while read -r bname brel; do
+            [ -n "$bname" ] && [ -n "$brel" ] || continue
+            [ -e "${TOOLS_PREFIX}/lib/node_modules/${pkg}/${brel}" ] || continue
+            ln -sf "${TOOLS_PREFIX}/lib/node_modules/${pkg}/${brel}" "${TOOLS_PREFIX}/bin/${bname}" 2>/dev/null || true
+        done
+        [ -x "${TOOLS_PREFIX}/bin/${cmdname}" ] && return 0
+    fi
+    echo "[entrypoint] Installing ${cmdname} (${pkg}) into persistent prefix..."
+    # -g 走全局布局(prefix/lib/node_modules + prefix/bin);必须显式 -g,
+    # 否则装成 local 布局(prefix/node_modules + node_modules/.bin),PATH 找不到。
+    # 串行 + 超时:并发装多个包会打满容器代理连接池卡死(2026-11-10 实测)。
+    timeout 900 npm install -g --prefix "${TOOLS_PREFIX}" \
+        --fetch-timeout=90000 --fetch-retries=1 "${pkg}" >/dev/null 2>&1 \
+        || echo "[entrypoint] ⚠️ ${pkg} install failed (timeout or network)."
+}
+
+ensure_npm_cli "@anthropic-ai/claude-code" "claude"
+ensure_npm_cli "command-code" "cmd"
+ensure_npm_cli "@github/copilot" "copilot"
+
+# kiro-cli:安装脚本落在 $HOME/.local/bin(已是命名卷),容器重建后仍在
+if [ ! -x /root/.local/bin/kiro-cli ]; then
+    echo "[entrypoint] Installing kiro-cli into /root/.local/bin (persistent)..."
+    command -v unzip >/dev/null 2>&1 || (apt-get update && apt-get install -y unzip >/dev/null 2>&1 || true)
+    curl -fsSL https://cli.kiro.dev/install | bash >/dev/null 2>&1 || echo "[entrypoint] ⚠️ kiro-cli install failed."
+fi
+
+# cmd(command-code) 登录态播种:宿主 ~/.commandcode 有 auth.json/providers.json,
+# 容器首启复制一次(之后由 bind mount 持久化,不再重复)
+if [ -d /root/.commandcode ] && [ ! -f /root/.commandcode/auth.json ] \
+   && [ -f /root/.commandcode-host/auth.json ]; then
+    cp /root/.commandcode-host/auth.json /root/.commandcode/ 2>/dev/null || true
+    for f in providers.json config.json settings.json mcp.json; do
+        [ -f "/root/.commandcode-host/$f" ] && cp "/root/.commandcode-host/$f" /root/.commandcode/ 2>/dev/null || true
+    done
+    chmod 600 /root/.commandcode/* 2>/dev/null || true
+    echo "[entrypoint] cmd(command-code) auth & config seeded from host."
+fi
+
+# claude 登录态/配置播种:宿主 settings.json 是软链(provider 切换用,如 → settings.jsonglm),
+# 必须解引用取真实文件;凭证 .credentials.json 同样复制
+if [ -d /root/.claude ] && [ -d /root/.claude-host ]; then
+    if [ ! -f /root/.claude/settings.json ] && [ -e /root/.claude-host/settings.json ]; then
+        cp -L /root/.claude-host/settings.json /root/.claude/settings.json 2>/dev/null || true
+        echo "[entrypoint] Claude settings.json seeded from host (symlink dereferenced)."
+    fi
+    if [ ! -f /root/.claude/.credentials.json ] && [ -f /root/.claude-host/.credentials.json ]; then
+        cp /root/.claude-host/.credentials.json /root/.claude/ 2>/dev/null || true
+        chmod 600 /root/.claude/.credentials.json 2>/dev/null || true
+        echo "[entrypoint] Claude credentials seeded from host."
+    fi
+fi
+
 
 #------------------------------------------------------------------------------
 # 7. Welcome banner + interactive shell
@@ -475,6 +586,9 @@ cat <<'BANNER'
 
    Next step:
        >> run `agy` to authenticate Google Antigravity <<
+       >> run `copilot` to start GitHub Copilot CLI     <<
+       >> run `kiro-cli` to start Kiro AI assistant    <<
+       >> run `claude` / `cmd` for Claude Code & cmd    <<
 
    Mihomo logs : /root/mihomo.log
    Config      : /root/.config/mihomo/config.yaml

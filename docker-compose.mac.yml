@@ -14,6 +14,10 @@ services:
     environment:
       TZ: Asia/Shanghai
       CLASH_URL: ${CLASH_URL:-}
+      # npm 全局包装在持久化卷 /opt/agy-tools,bin 目录进 PATH
+      PATH: /opt/agy-tools/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      NPM_CONFIG_PREFIX: /opt/agy-tools
+      NPM_CONFIG_CACHE: /root/.npm
 
     cap_add:
       - NET_ADMIN
@@ -28,6 +32,28 @@ services:
       - ./agy-home:/root/.gemini
       # 持久化全局 Claude 登录态、命令与 Skills
       - ./claude-home:/root/.claude
+      # 宿主 claude 配置只读源(settings.json 软链指向 settings.jsonglm,entrypoint 首启播种用)
+      - ${HOME}/.claude:/root/.claude-host:ro
+      # 持久化 cmd(command-code) 配置与登录态(auth.json/providers.json)
+      - ./cmd-home:/root/.commandcode
+      # 宿主 cmd 配置只读源(entrypoint 首启播种 auth.json 用)
+      - ${HOME}/.commandcode:/root/.commandcode-host:ro
+      # 持久化 cmd 全局 skills
+      - ./cmd-home-skills:/root/.cmd
+      # 持久化 CLI 二进制本体(npm 全局包):容器重建不丢 claude/cmd/copilot
+      # 用独立 prefix(/opt/agy-tools)而非 /usr/local——后者会把 npm 自身也卷进去,
+      # 且 /usr/local/bin 的软链仍在可写层,重建即失效;独立 prefix + PATH 最干净
+      - agy-tools:/opt/agy-tools
+      # 持久化 npm 下载缓存(1.8GB):重建后免重下
+      - agy-npm-cache:/root/.npm
+      # 持久化 kiro-cli / agy 等 ~/.local/bin 二进制
+      - agy-local-bin:/root/.local/bin
+      # 持久化全局 Copilot 登录态与会话
+      - ./copilot-home:/root/.copilot
+      # 共享宿主机 Copilot 登录态
+      - ${HOME}/.copilot:/root/.copilot-host:ro
+      # 持久化全局 Kiro 登录态与配置
+      - ./kiro-home:/root/.kiro
       # 共享宿主机 git 身份 + SSH 密钥
       - ${HOME}/.gitconfig:/root/.gitconfig-host:ro
       - ${HOME}/.ssh:/root/.ssh-host:ro
@@ -38,3 +64,9 @@ services:
 
     stdin_open: true
     tty: true
+
+# 命名卷:模型 CLI 工具链本体(容器重建/删除后仍在,免重装免重登)
+volumes:
+  agy-tools:
+  agy-local-bin:
+  agy-npm-cache:

@@ -45,6 +45,26 @@ docker compose up -d
 - GitHub HTTPS 远程自动重写为 SSH(走 `ssh.github.com:443`,无需 PAT)
 - 密钥在容器内已修正权限(chmod 600)
 
+## 模型 CLI 工具链与持久化
+
+容器内可用的模型 CLI:`agy`、`claude`、`cmd`(command-code)、`copilot`、`kiro-cli` —— 全部走容器内 mihomo 的合规出口。
+
+**两层持久化**(容器 `docker rm` + 重建后不丢):
+
+| 内容 | 位置 | 类型 |
+|---|---|---|
+| npm 全局包(`claude`/`cmd`/`copilot`) | `/opt/agy-tools` | 命名卷 `agy-tools` |
+| `kiro-cli` / `agy` 二进制 | `/root/.local/bin` | 命名卷 `agy-local-bin` |
+| npm 下载缓存(1.8GB) | `/root/.npm` | 命名卷 `agy-npm-cache` |
+| 登录态与配置 | `/root/.claude` `/root/.copilot` `/root/.kiro` `/root/.gemini` `/root/.commandcode` | bind mount(仓库目录,已 gitignore) |
+
+- 首次启动时 entrypoint 会把宿主 `~/.claude`(settings.json 是软链,复制时解引用)与 `~/.commandcode`(auth.json/providers.json)播种进容器,之后由 bind mount 自行留存。
+- `NPM_CONFIG_PREFIX=/opt/agy-tools` + PATH 前置 `/opt/agy-tools/bin`,故 `npm install -g` 装的东西天然持久;**必须带 `-g`**,否则会装成 local 布局(`node_modules/.bin`)导致命令找不到。
+- 卷内容检查:`bash scripts/init-tools-volumes.sh`;首次播种:`bash scripts/init-tools-volumes.sh --seed`。
+
+**宿主侧透明代理**(容器内跑,吃容器出口):`~/.local/bin/` 下安装 `claude.sh` / `cmd.sh` / `copilot.sh` / `kiro-cli.sh`。
+统一用 `.sh` 后缀、**不覆盖宿主原生的 `claude`/`cmd`** —— 宿主 claude 有 provider 软链切换机制(`~/.claude/settings.json → settings.jsonglm`),被顶掉会出事。
+
 ## 构建说明
 
 镜像已发布到 **Docker Hub**(`chw717/ai-agy:latest`),`docker compose up -d` 会自动拉取,**无需本地构建**。
