@@ -136,6 +136,11 @@ rules:
 ${SUB_DIRECT_RULES}
   # Tailscale/CGNAT 段(100.64.0.0/10)直连:经宿主 tailscale0 转发,不进 TUN 代理
   - IP-CIDR,100.64.0.0/10,DIRECT
+  # docker 网段(172.16/12)直连:容器转发/互访流量不被自己的 TUN 劫持
+  # (否则容器访问宿主或其它容器会绕代理,表现为莫名超时)
+  - IP-CIDR,172.16.0.0/12,DIRECT
+  - IP-CIDR,192.168.0.0/16,DIRECT
+  - IP-CIDR,10.0.0.0/8,DIRECT
   - MATCH,PROXY
 EOF
 elif [ -f "${MIHOMO_DIR}/proxies-static.yaml" ]; then
@@ -211,6 +216,10 @@ rules:
 ${SUB_DIRECT_RULES}
   # Tailscale/CGNAT 段(100.64.0.0/10)直连:经宿主 tailscale0 转发,不进 TUN 代理
   - IP-CIDR,100.64.0.0/10,DIRECT
+  # docker 网段(172.16/12)与私网直连:容器转发/互访流量不被自己的 TUN 劫持
+  - IP-CIDR,172.16.0.0/12,DIRECT
+  - IP-CIDR,192.168.0.0/16,DIRECT
+  - IP-CIDR,10.0.0.0/8,DIRECT
   - MATCH,PROXY
 EOF
 else

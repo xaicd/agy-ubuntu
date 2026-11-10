@@ -31,7 +31,7 @@ CONTAINER="agy-ubuntu-container"
 DEFAULT_TARGETS=(
     "aja-pc:/home/beye/workspace/zhuangyuan/agy-ubuntu"
     "cwall:/home/cw/workspace/agy-ubuntu"
-    "tc-coolie-claw:/home/ubuntu/workspace/agy-ubuntu"
+    "tc-coolie-claw:/opt/coolie/docker/agy-ubuntu"
 )
 
 DO_EXPORT=0
