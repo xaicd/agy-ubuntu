@@ -20,10 +20,14 @@ LOG="${HOME}/Library/Logs/agy-proxy-heal.log"
 CONTAINER="agy-ubuntu-container"
 CFG="/root/.config/mihomo/config.yaml"
 STATIC_LOCAL="${REPO_DIR}/mihomo-conf/proxies-static.yaml"
-HOSTS=("aja-pc:/home/beye/workspace/zhuangyuan/agy-ubuntu")
+HOSTS=(
+  "aja-pc:/home/beye/workspace/zhuangyuan/agy-ubuntu"
+  # cwall 纳管(2026-11-10):静态节点停留在 10-10 未推送 → GEO 全挂 → 降级 RESCUE 落到香港02
+  #   → agy 资格端点 flaky,墨斗 agy_local 报 "authentication required"。
+  "cwall:/home/cw/workspace/agy-ubuntu"
+)
 # 需要纳管更多宿主机时在此追加(格式: 别名:仓库路径):
-#   "cwall:/home/cw/workspace/agy-ubuntu"
-#   "tc-coolie-claw:/home/ubuntu/workspace/agy-ubuntu"
+#   "tc-coolie-claw:/opt/coolie/docker/agy-ubuntu"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 log(){ echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
