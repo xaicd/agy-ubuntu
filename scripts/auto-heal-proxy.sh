@@ -20,12 +20,19 @@ LOG="${HOME}/Library/Logs/agy-proxy-heal.log"
 CONTAINER="agy-ubuntu-container"
 CFG="/root/.config/mihomo/config.yaml"
 STATIC_LOCAL="${REPO_DIR}/mihomo-conf/proxies-static.yaml"
-HOSTS=(
+DEFAULT_HOSTS=(
   "aja-pc:/home/beye/workspace/zhuangyuan/agy-ubuntu"
   # cwall 纳管(2026-11-10):静态节点停留在 10-10 未推送 → GEO 全挂 → 降级 RESCUE 落到香港02
   #   → agy 资格端点 flaky,墨斗 agy_local 报 "authentication required"。
   "cwall:/home/cw/workspace/agy-ubuntu"
 )
+# HOSTS 可用 COOLIE_HEAL_HOSTS 覆盖(空格分隔的 "别名:路径");置空=只治本机。
+# 用途:某台主机在跑正式业务时,自愈只探不写(自愈本身是保护性的,但仍应可按需收敛范围)。
+if [ -n "${COOLIE_HEAL_HOSTS+x}" ]; then
+  read -r -a HOSTS <<< "$COOLIE_HEAL_HOSTS"
+else
+  HOSTS=("${DEFAULT_HOSTS[@]}")
+fi
 # 需要纳管更多宿主机时在此追加(格式: 别名:仓库路径):
 #   "tc-coolie-claw:/opt/coolie/docker/agy-ubuntu"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -34,18 +41,53 @@ log(){ echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 
 # ---------- 通用动作(H=ssh 别名,"-"=本地) ----------
 GY_API="https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
-vfy(){  # 容器体检: 输出 "code|redirect|apicode" (apicode=agy 端点连测2次,任一 000 即记 000——出口 flaky 必须抓出来)
+vfy(){  # 容器体检: 输出 "code|redirect|apicode"
+  # 采样次数(VFY_SAMPLES):机场在**单节点背后轮换出口 IP**(同一节点前后测出 200/302),
+  # 单次采样必然误判 → 多次采样取**多数**结论。默认 3 次。
   local H="$1"
+  local N="${VFY_SAMPLES:-3}"
   if [ "$H" = "-" ]; then
-    local r a x
-    r=$(docker exec "$CONTAINER" curl -s -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 12 http://www.google.com 2>/dev/null)
+    local r a x ok200=0 bad302=0
+    for x in $(seq 1 "$N"); do
+      local one
+      one=$(docker exec "$CONTAINER" curl -s -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 12 http://www.google.com 2>/dev/null)
+      if [ "${one%%|*}" = "200" ] && ! printf '%s' "$one" | grep -q 'google.com.hk'; then
+        ok200=$((ok200+1))
+      else
+        bad302=$((bad302+1))
+      fi
+      [ "$x" -lt "$N" ] && sleep 1
+    done
+    # 多数干净才算干净;否则用最后一次的实际值(便于日志看出是 HK 判定还是不可用)
+    if [ "$ok200" -gt "$bad302" ]; then r="200|"; else r="$(docker exec "$CONTAINER" curl -s -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 12 http://www.google.com 2>/dev/null)"; fi
     a="ok"
-    for x in 1 2; do
+    for x in $(seq 1 "$N"); do
       [ "$(docker exec "$CONTAINER" curl -s -o /dev/null -w '%{http_code}' -X POST --max-time 15 "$GY_API" 2>/dev/null)" = "000" ] && a="000"
+      [ "$x" -lt "$N" ] && sleep 1
     done
     echo "${r}|${a}"
   else
-    ssh -o BatchMode=yes -o ConnectTimeout=8 "$H" "a=ok; for x in 1 2; do c=\$(docker exec $CONTAINER curl -s -o /dev/null -w '%{http_code}' -X POST --max-time 15 '$GY_API'); [ \"\$c\" = '000' ] && a=000; done; docker exec $CONTAINER curl -s -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 12 http://www.google.com; echo -n \"|\$a\"" 2>/dev/null
+    # 远端同样多数采样(出口 IP 逐连接漂移,单次采样会误判)
+    ssh -o BatchMode=yes -o ConnectTimeout=8 "$H" "
+      ok=0; bad=0; last=''
+      for x in \$(seq 1 '$N'); do
+        one=\$(docker exec $CONTAINER curl -s -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 12 http://www.google.com 2>/dev/null)
+        case \"\$one\" in
+          200\|*) ok=\$((ok+1));;
+          *) bad=\$((bad+1));;
+        esac
+        last=\"\$one\"
+        [ \"\$x\" -lt '$N' ] && sleep 1
+      done
+      if [ \$ok -gt \$bad ]; then r='200|'; else r=\"\$last\"; fi
+      a=ok
+      for x in \$(seq 1 '$N'); do
+        c=\$(docker exec $CONTAINER curl -s -o /dev/null -w '%{http_code}' -X POST --max-time 15 '$GY_API' 2>/dev/null)
+        [ \"\$c\" = '000' ] && a=000
+        [ \"\$x\" -lt '$N' ] && sleep 1
+      done
+      printf '%s|%s' \"\$r\" \"\$a\"
+    " 2>/dev/null
   fi
 }
 kick(){  # 踢 provider 健康检查 + 强制热重载
@@ -72,6 +114,14 @@ reload(){  # 热重载,输出 http code
     docker exec "$CONTAINER" curl -s -o /dev/null -w '%{http_code}' -X PUT "http://127.0.0.1:9090/configs?force=true" -H 'Content-Type: application/json' -d "{\"path\":\"$CFG\"}" --max-time 10
   else
     ssh -o BatchMode=yes "$H" "docker exec $CONTAINER curl -s -o /dev/null -w '%{http_code}' -X PUT 'http://127.0.0.1:9090/configs?force=true' -H 'Content-Type: application/json' -d '{\"path\":\"$CFG\"}' --max-time 10" 2>/dev/null
+  fi
+}
+cur_node(){  # 当前真实出口节点名(查 PROXY-GEO.now,失败返回空)
+  local H="$1"
+  if [ "$H" = "-" ]; then
+    docker exec "$CONTAINER" curl -s http://127.0.0.1:9090/proxies/PROXY-GEO 2>/dev/null | sed -n 's/.*"now":"\([^"]*\)".*/\1/p'
+  else
+    ssh -o BatchMode=yes "$H" "docker exec $CONTAINER curl -s http://127.0.0.1:9090/proxies/PROXY-GEO 2>/dev/null | sed -n 's/.*\"now\":\"\([^\"]*\)\".*/\1/p'" 2>/dev/null
   fi
 }
 sel_pin(){  # PUT /proxies/PIN 切到指定节点
@@ -125,6 +175,12 @@ PY
   while IFS= read -r n; do
     [ -n "$n" ] || continue
     sel_pin "$H" "$n"; sleep 1
+    # 确认切换真的生效(PIN 组悬空时 sel_pin 会静默失败,测的全是同一个出口)
+    local now; now="$(cur_node "$H")"
+    if [ -n "$now" ] && [ "$now" != "$n" ]; then
+      log "  [pin] ⚠️  切节点未生效(当前 $now,期望 $n),跳过该候选"
+      continue
+    fi
     if clean "$(vfy "$H")"; then log "  [pin] ✅ 干净出口: $n"; GOOD="${GOOD}${n}\n"; else log "  [pin] ❌ $n"; fi
   done <<< "$CANDS"
 

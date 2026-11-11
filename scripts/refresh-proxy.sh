@@ -5,7 +5,7 @@
 # 核心原则：
 #   1. 纯 API 热重载，绝对不杀进程（禁止 pkill），防止 TUN 网卡崩溃断网；
 #   2. 自动识别 Docker 网关（宿主机 IP）与常用私网段（100.64.0.0/10、192.144.0.0/16等）；
-#   3. 锁定合规地区（日本、美国、智利、台湾），硬排除香港/澳门/新加坡；
+#   3. 锁定合规地区（日本、台湾），硬排除香港/澳门/新加坡/美国/智利；
 #   4. 持久保存在工作区脚本中，容器重启/重建零丢失。
 #==============================================================================
 
@@ -64,11 +64,17 @@ echo "  -> 生效 DIRECT 网段: ${FINAL_CIDRS[*]}"
 echo "[2/3] ⚙️  更新过滤规则 (美/日/智/台，硬排除港澳新)..."
 
 # 更新 filter 与 exclude-filter（锚定行首，避免误伤 exclude-filter 行）
-# 该订阅全部"美国"档出口被 Google 判为不支持地区(2026-09-26 实测),
-# 【1X】/边缘加速(CloudFront 前置)底座不稳曾整晚断流,两者一并排除
-EXCLUDE_FILTER='.*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|【1X】|边缘加速).*'
-FILTER='.*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*'
-sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*"/' "$MIHOMO_CONFIG"
+#
+# 2026-11-11 修订（与 entrypoint.sh 保持一致，此前两处策略**相反**）:
+#   机场会在**单节点背后轮换出口 IP**(同一节点前后测出 200/302),单档冗余为零,
+#   漂到坏出口就整组无合格节点 → agy 报 eligibility EOF。
+#   故【1X】边缘加速与【3X】核心加速**两档都留**,只硬排除真禁用区:
+#   美国(Google 判 Gemini 不支持地区)、香港/澳门/新加坡(agy 拒用)、
+#   智利(Antigravity 拒该出口,见 70a5645)、【10X】专线(与 3X 同出口)。
+#   ⚠️ 策略只能有一处真源:本文件与 entrypoint.sh 必须同步改,否则谁后跑谁赢。
+EXCLUDE_FILTER='.*(香港|HK|Hong Kong|澳门|新加坡|SG|美国|美國|USA|United States|🇺🇸|智利|Chile|【10X】|专线加速).*'
+FILTER='.*(日本|台湾|台灣|Japan|Taiwan).*'
+sed -i -E "s/^([[:space:]]*)filter: .*/\1filter: \"$FILTER\"/" "$MIHOMO_CONFIG"
 if grep -q "exclude-filter:" "$MIHOMO_CONFIG"; then
     sed -i -E "s/^([[:space:]]*)exclude-filter: .*/\1exclude-filter: \"$EXCLUDE_FILTER\"/" "$MIHOMO_CONFIG"
 else
@@ -101,7 +107,7 @@ fi
 
 # 同步给 entrypoint 脚本（容器如果被 docker restart 重启，也能保留）
 if [ -f "$ENTRYPOINT_SCRIPT" ] && [ -w "$ENTRYPOINT_SCRIPT" ]; then
-    sed -i -E 's/^([[:space:]]*)filter: .*/\1filter: ".*(日本|智利|台湾|台灣|Japan|Chile|Taiwan|🇯🇵|🇨🇱|🇹🇼).*"/' "$ENTRYPOINT_SCRIPT"
+    sed -i -E "s/^([[:space:]]*)filter: .*/\1filter: \"$FILTER\"/" "$ENTRYPOINT_SCRIPT"
     sed -i -E "s/^([[:space:]]*)exclude-filter: .*/\1exclude-filter: \"$EXCLUDE_FILTER\"/" "$ENTRYPOINT_SCRIPT"
 fi
 
@@ -109,8 +115,20 @@ echo "======================================================================"
 ACTIVE_NODE="$(curl -s "${MIHOMO_API}/proxies/PROXY" 2>/dev/null | grep -o '"now":"[^"]*"' | cut -d'"' -f4 || echo "未知")"
 echo "🌟 当前活跃出海节点: $ACTIVE_NODE"
 
-GOOGLE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "https://www.google.com/generate_204" 2>/dev/null || echo "000")"
-echo "🌐 Google / Gemini 外网连通: HTTP $GOOGLE_STATUS"
+# 状态验证必须看**首页 redirect**:generate_204 对被判香港的出口照样返 204(瞎的)
+GOOGLE_OUT="$(curl -s -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 8 "http://www.google.com" 2>/dev/null || echo "000|")"
+GOOGLE_CODE="${GOOGLE_OUT%%|*}"
+GOOGLE_REDIR="${GOOGLE_OUT#*|}"
+if [ "$GOOGLE_CODE" = "200" ] && ! printf '%s' "$GOOGLE_REDIR" | grep -q 'google.com.hk'; then
+    echo "🌐 Google 首页: 200 无跳转 ✅(出口合规)"
+elif [ "$GOOGLE_CODE" = "302" ] && printf '%s' "$GOOGLE_REDIR" | grep -q 'google.com.hk'; then
+    echo "🌐 Google 首页: 302 → google.com.hk ❌(出口被判香港,agy 会报 eligibility EOF)"
+else
+    echo "🌐 Google 首页: ${GOOGLE_CODE} ⚠️(出口不可用)"
+fi
+AGY_API_CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST --max-time 12 \
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist" 2>/dev/null || echo "000")"
+echo "🔑 agy 资格端点: ${AGY_API_CODE}(000=连不上,401=可达)"
 
 if [ -n "$HOST_GW" ]; then
     GW_STATUS="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://${HOST_GW}/" 2>/dev/null || echo "000")"

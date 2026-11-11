@@ -67,6 +67,10 @@ services:
 
 # 命名卷:模型 CLI 工具链本体(容器重建/删除后仍在,免重装免重登)
 volumes:
+  # 显式 name:不跟 compose 项目名走前缀 —— 各机卷名一致,跨机排查/迁移不用猜
   agy-tools:
+    name: agy-tools
   agy-local-bin:
+    name: agy-local-bin
   agy-npm-cache:
+    name: agy-npm-cache
